@@ -186,7 +186,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 						for(String pname : lcoalition) {
 							if(!plrs.contains(pname)) {
 								if(playersNames[i].equals(pname)) {
-									System.out.println("Player " + pname + " added to coalition 0");
+									//System.out.println("Player " + pname + " added to coalition 0");
 									coalitions.get(0).add(i);
 									plrs.add(pname);
 								}
@@ -194,7 +194,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 						}
 						String pname = playersNames[i];
 						if(!plrs.contains(pname) && !lcoalition.contains(pname)) {
-							System.out.println("Player " + pname + " added to coalition 1");
+							//System.out.println("Player " + pname + " added to coalition 1");
 							coalitions.get(1).add(i);
 							plrs.add(pname);
 						}
@@ -203,7 +203,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 						for(String pname : lcoalition) {
 							if(!plrs.contains(pname)) {
 								if(playersNames[i].equals(pname)) {
-									System.out.println("Player " + pname + " added to coalition 1");
+									//System.out.println("Player " + pname + " added to coalition 1");
 									coalitions.get(1).add(i);
 									plrs.add(pname);
 								}
@@ -211,7 +211,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 						}
 						String pname = playersNames[i];
 						if(!plrs.contains(pname) && !lcoalition.contains(pname)) {
-							System.out.println("Player " + pname + " added to coalition 0");
+							//System.out.println("Player " + pname + " added to coalition 0");
 							coalitions.get(0).add(i);
 							plrs.add(pname);
 						}
@@ -263,7 +263,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 		MinMax minMax = opInfo.getMinMax(model.getModelType(), forAll, null);
 		
 		/***/
-		System.out.println("RelOp Min/Max: " + expr.getRelOp().isMin() + " "  + expr.getRelOp().isMax());
+		//System.out.println("RelOp Min/Max: " + expr.getRelOp().isMin() + " "  + expr.getRelOp().isMax());
 		/***/
 				
 		// Check for trivial (i.e. stupid) cases
@@ -280,7 +280,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 		boolean qual = opInfo.isQualitative() && precomp && prob0 && prob1;
 		
 		/*** NEEDS CHANGING ***/
-		System.out.println("Min/Max: " + minMax.isMin() + " " + minMax.isMax());
+		//System.out.println("Min/Max: " + minMax.isMin() + " " + minMax.isMax());
 		
 		//StateValues probs = checkProbPathFormula(expr.getExpression(), coalitions, qual, minMax.isMin());
 		StateValues probs = checkProbPathFormula(expr.getExpression(), coalitions, qual, expr.getRelOp().isMin());
@@ -899,7 +899,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 			}
 		}		
 
-		System.out.println("Convergence after " + i + " iterations.");
+		//System.out.println("Convergence after " + i + " iterations.");
 
 		//JDD.Ref(r);
 		//JDD.Ref(start);
@@ -1028,7 +1028,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 
 		}		
 
-		System.out.println("Convergence after " + i + " iterations.");
+		//System.out.println("Convergence after " + i + " iterations.");
 
 		/*
 		JDD.Ref(r);
@@ -1132,7 +1132,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 			i++;
 		}
 
-		System.out.println("Convergence after " + i + " iterations.");
+		//System.out.println("Convergence after " + i + " iterations.");
 
 		for(i = 0; i < numplayers; i++) {
 			JDD.Deref(ddTempRewardsPlayers[i]);
@@ -1398,7 +1398,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 			i++;
 		}
 
-		System.out.println("Convergence after " + i + " iterations.");
+		//System.out.println("Convergence after " + i + " iterations.");
 
 		/*
         System.out.println("-- Mult --");
@@ -1491,7 +1491,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 	
 	public JDDNode computeBoundedUntilProbs(JDDNode phi1, JDDNode phi2, int l, int numplayers, ArrayList<ArrayList<Integer>> coalitions) {
 
-		System.out.println("Symbolic Bounded Until...");
+		//System.out.println("Symbolic Bounded Until...");
 		
 		int i;
 		
@@ -1566,7 +1566,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 			}
 		}		
 
-		System.out.println("Convergence after " + i + " iterations.");
+		//System.out.println("Convergence after " + i + " iterations.");
 		
 		JDD.Deref(phi2);
 		JDD.Deref(r);
