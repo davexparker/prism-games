@@ -320,7 +320,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 		StateValues probs = null;
 				
 		if(qual) {
-			throw new PrismException("Qualitative formulae are not yet supported.");
+			throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 		}
 		else {
 			if(expr instanceof ExpressionTemporal) {
@@ -338,12 +338,12 @@ public class GamesModelChecker extends NonProbModelChecker {
 						probs = checkProbBoundedUntil(exprTemp, min, coalitions);
 					} else {
 						probs = checkProbUntil(exprTemp, qual, min, coalitions);
-						//throw new PrismException("Operator not yet supported.");
+						//throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 					}
 				}
 			}
 			else {
-				throw new PrismException("Only probabilistic reachability is supported at the moment.");
+				throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 			}
 		}
 		
@@ -382,7 +382,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 	protected StateValues checkExpressionReward(ExpressionReward expr, boolean forAll, ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
 		// Get info from R operator
 	    if(expr.getRewardStructIndexDiv() != null)
-	    	throw new PrismException("Ratio rewards not supported with the selected engine and module type.");
+	    	throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 		OpRelOpBound opInfo = expr.getRelopBoundInfo(constantValues);
 		MinMax minMax = opInfo.getMinMax(model.getModelType(), forAll, null);
 
@@ -408,11 +408,11 @@ public class GamesModelChecker extends NonProbModelChecker {
 				rewards = checkRewardCumul(exprTemp, stateRewards, transRewards, coalitions);
 				break;
 			default:	
-				throw new PrismException("This operator is not supported at the moment.");
+				throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 			}
 		} 
 		else if(expr2.getType() instanceof TypePathBool || expr2.getType() instanceof TypeBool) {
-			throw new PrismException("This operator is not supported at the moment.");
+			throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 		}
 
 		if(rewards == null)
@@ -453,7 +453,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 			rewards = computeCumulRewards(expr, trans, stateRewards, transRewards, coalitions);
 		} 
 		else {
-	        throw new PrismException("Only rewards conditioned to reachability (Fc) is supported at the moment.");
+	        throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 		}
 		
 		return rewards;
@@ -534,7 +534,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 			
 			//JDD.Deref(b1);
 			//JDD.Deref(b2);
-			//throw new PrismException("Unbounded until not supported at the moment.");
+			//throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 			
 			// unbounded
 			try {
