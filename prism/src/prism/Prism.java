@@ -1774,7 +1774,6 @@ public class Prism extends PrismComponent implements PrismSettingsListener
 
 		// For some models, automatically switch engine
 		switch (currentModelType) {
-		case SMG:
 		case STPG:
 		case CTMDP:
    		        if(!getExplicit()) { // not using explicit engine already
@@ -2063,8 +2062,7 @@ public class Prism extends PrismComponent implements PrismSettingsListener
 				if (currentModulesFile == null)
 					throw new PrismException("There is no currently loaded PRISM model to build");
 				if (!getExplicit()) {
-					Modules2MTBDD mod2mtbdd = new Modules2MTBDD(this, currentModulesFile);
-					currentModel = mod2mtbdd.translate();
+					currentModel = new Modules2MTBDD(this, currentModulesFile).translate();
 					currentModelExpl = null;
 				} else {
 					if (currentModulesFile.getSystemDefn() != null) {
@@ -2076,7 +2074,6 @@ public class Prism extends PrismComponent implements PrismSettingsListener
 					currentModel = null;
 					currentModelExpl = constructModel.constructModel(new ModulesFileModelGenerator(currentModulesFile, this), false, cancel_computation);
 				}
-				// if (...) ... currentModel = buildModelExplicit(currentModulesFile);
 				break;
 			case MODEL_GENERATOR:
 				if (currentModelGenerator == null)

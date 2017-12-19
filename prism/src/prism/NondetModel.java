@@ -207,7 +207,7 @@ public class NondetModel extends ProbModel
 		JDDNode tmp;
 
 		// remove any nondeterminism
-		JDD.Ref(trans01);
+		//JDD.Ref(trans01);
 		tmp = JDD.MaxAbstract(trans01, allDDNondetVars);
 
 		// compute reachable states
@@ -276,11 +276,12 @@ public class NondetModel extends ProbModel
 		
 		// build mask for nondeterminstic choices
 		// (and work out number of choices)
-		JDD.Ref(trans01);
-		JDD.Ref(reach);
+
 		if (this.nondetMask != null)
 			JDD.Deref(this.nondetMask);
 		// nb: this assumes that there are no deadlock states
+		JDD.Ref(trans01);
+		JDD.Ref(reach);
 		nondetMask = JDD.And(JDD.ThereExists(trans01, allDDColVars), reach);
 		numChoices = JDD.GetNumMinterms(nondetMask, getNumDDRowVars() + getNumDDNondetVars());
 		JDD.Ref(reach);

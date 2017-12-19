@@ -654,7 +654,20 @@ public class DebugJDD
 			trace("Deref (as method argument)", dNode);
 		}
 	}
-
+	
+	public static boolean isTraceAll() {
+		return traceAll;
+	}
+	public static void setTraceAll(boolean traceAll) {
+		DebugJDD.traceAll = traceAll;
+	}
+	public static boolean isWarningsAreFatal() {
+		return warningsAreFatal;
+	}
+	public static void setWarningsAreFatal(boolean warningsAreFatal) {
+		DebugJDD.warningsAreFatal = warningsAreFatal;
+	}
+	
 	/**
 	 * DebugJDD handling of JDDNode.getThen().
 	 * Returns a DebugJDDNodeLight wrapper around the result.

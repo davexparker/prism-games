@@ -36,6 +36,7 @@ import java.util.Vector;
 
 import mtbdd.PrismMTBDD;
 import dv.DoubleVector;
+import gamessymb.GamesModelChecker;
 import jdd.*;
 import odd.*;
 import parser.*;
@@ -147,8 +148,9 @@ public class StateModelChecker extends PrismComponent implements ModelChecker
 		this.constantValues = constantValues;
 		// Create dummy model
 		reach = null;
-		model = new ProbModel(JDD.Constant(0),  // trans
-		                      JDD.Constant(0),  // start
+		JDDNode n = JDD.Constant(0);
+		model = new ProbModel(n,  // trans
+							  n,  // start
 		                      new JDDNode[] {}, // state-rew
 		                      new JDDNode[] {}, // trans-rew
 		                      null,             // rewardStructNames
@@ -161,7 +163,7 @@ public class StateModelChecker extends PrismComponent implements ModelChecker
 		                      null,             // moduleColVars
 		                      varDDRowVars.length, // numVars
 		                      varList,          // varList
-		                      JDDVars.copyArray(varDDRowVars), // varDDRowVars
+		                      varDDRowVars, // varDDRowVars //JDDVars.copyArray(varDDRowVars)
 		                      null,             // varDDColVars
 		                      constantValues    // constantValues
 		                     );
@@ -182,6 +184,9 @@ public class StateModelChecker extends PrismComponent implements ModelChecker
 			break;
 		case CTMC:
 			mc = new StochModelChecker(prism, model, propertiesFile);
+			break;
+		case SMG:
+			mc = new GamesModelChecker(prism, model, propertiesFile);
 			break;
 		default:
 			throw new PrismException("Cannot create model checker for model type " + modelType);

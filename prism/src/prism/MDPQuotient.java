@@ -96,11 +96,25 @@ public class MDPQuotient implements ModelTransformation<NondetModel,NondetModel>
 	{
 		return transformedModel;
 	}
-
+	
+	/*** ***/
+	
+	public JDDVars getAddedVars() {
+		
+		return transform.extraActionVars;
+		
+	} 
+	
+	/*** ***/
+	
 	@Override
 	public void clear()
 	{
-		transformedModel.clear();
+		/*** ***/
+		// this line of code was commented due to : Exception in thread "main" java.lang.UnsatisfiedLinkError: odd.ODDUtils.ODD_ClearODD(J)V
+		// transformedModel.clear();
+		/*** ***/
+		
 		transform.clear();
 		JDD.Deref(transformedStatesOfInterest);
 	}

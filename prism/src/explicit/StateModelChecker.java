@@ -40,6 +40,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.Vector;
 
+import gamessymb.GamesModelChecker;
 import parser.State;
 import parser.Values;
 import parser.ast.Expression;

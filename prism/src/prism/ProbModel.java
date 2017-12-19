@@ -664,7 +664,6 @@ public class ProbModel implements Model
 		trans = JDD.Apply(JDD.TIMES, tmp, trans);
 
 		// recalculate 0-1 version of trans
-		JDD.Deref(trans01);
 		JDD.Ref(trans);
 		trans01 = JDD.GreaterThan(trans, 0);
 
@@ -702,7 +701,7 @@ public class ProbModel implements Model
 		JDD.Ref(reach);
 		start = JDD.Apply(JDD.TIMES, reach, start);
 		numStartStates = JDD.GetNumMinterms(start, allDDRowVars.n());
-
+		
 		// work out number of transitions
 		numTransitions = JDD.GetNumMinterms(trans01, getNumDDVarsInTrans());
 	}
@@ -1218,7 +1217,7 @@ public class ProbModel implements Model
 
 		if (odd != null) {
 			// clear ODD
-			ODDUtils.ClearODD(odd);
+			//ODDUtils.ClearODD(odd);
 			odd = null;
 		}
 
