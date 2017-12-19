@@ -36,7 +36,6 @@ import java.util.Vector;
 
 import mtbdd.PrismMTBDD;
 import dv.DoubleVector;
-import gamessymb.GamesModelChecker;
 import jdd.*;
 import odd.*;
 import parser.*;

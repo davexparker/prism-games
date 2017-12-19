@@ -32,7 +32,6 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Vector;
 
-import gamessymb.GamesModel;
 import jdd.JDD;
 import jdd.JDDNode;
 import jdd.JDDVars;

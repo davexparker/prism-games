@@ -24,7 +24,7 @@
 //	
 //==============================================================================
 
-package gamessymb;
+package prism;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -51,15 +51,6 @@ import parser.ast.RelOp;
 import parser.type.TypeBool;
 import parser.type.TypePathBool;
 import parser.type.TypePathDouble;
-import prism.IntegerBound;
-import prism.Model;
-import prism.NonProbModelChecker;
-import prism.OpRelOpBound;
-import prism.Prism;
-import prism.PrismException;
-import prism.StateModelChecker;
-import prism.StateValues;
-import prism.StateValuesMTBDD;
 
 public class GamesModelChecker extends NonProbModelChecker {
 	

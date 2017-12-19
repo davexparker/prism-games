@@ -1,4 +1,4 @@
-package gamessymb;
+package prism;
 
 import java.util.Vector;
 
@@ -7,10 +7,6 @@ import jdd.JDDNode;
 import jdd.JDDVars;
 import parser.Values;
 import parser.VarList;
-import prism.ModelType;
-import prism.ModelVariablesDD;
-import prism.NondetModel;
-import prism.PrismException;
 
 public class GamesModel extends NondetModel {
 	

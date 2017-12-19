@@ -40,7 +40,6 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.Vector;
 
-import gamessymb.GamesModelChecker;
 import parser.State;
 import parser.Values;
 import parser.ast.Expression;
@@ -67,6 +66,7 @@ import parser.type.TypeInt;
 import parser.visitor.ASTTraverseModify;
 import parser.visitor.ReplaceLabels;
 import prism.Filter;
+import prism.GamesModelChecker;
 import prism.ModelGenerator;
 import prism.ModelInfo;
 import prism.ModelType;
