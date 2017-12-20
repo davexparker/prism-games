@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Vector;
 
 import jdd.JDD;
@@ -149,8 +150,9 @@ public class Modules2MTBDD
 	private JDDVars allPlayersVars; // all players' vars
 	private JDDNode idsTree; // tree of ids
 	private int numPlayers;
-	private String[] playersNames; // array for players' names
-	
+	//private String[] playersNames; // array for players' names
+	private Map<Integer, String> playersNames;
+
 	// data structure used to store mtbdds and related info
 	// for some component of the whole model
 
@@ -315,9 +317,11 @@ public class Modules2MTBDD
 		
 		// SMG case
 		numPlayers = modulesFile.getNumPlayers();
-		playersNames = new String[numPlayers];
+		//playersNames = new String[numPlayers];
+		playersNames = new HashMap<Integer, String>();
 		for (int player = 0; player < numPlayers; player++) {
-			playersNames[player] = modulesFile.getPlayer(player).getName();
+			//playersNames[player] = modulesFile.getPlayer(player).getName();
+			playersNames.put(player+1, modulesFile.getPlayer(player).getName());
 		} 
 		if(modelType == ModelType.SMG) {
 			separateCommands();
@@ -494,7 +498,7 @@ public class Modules2MTBDD
 				ddPlayersIds[player] = modelVariables.allocateVariable(modulesFile.getPlayer(player).getName() + ".p");
 				playersVars[player] = new JDDVars();
 				playersVars[player].addVar(ddPlayersIds[player].copy());			
-				playersNames[player] = modulesFile.getPlayer(player).getName();
+				//playersNames[player] = modulesFile.getPlayer(player).getName();
 			} 
 		}
 
@@ -559,12 +563,14 @@ public class Modules2MTBDD
 			}
 			
 			/*** ***/
+			/*
 			for(Integer y : modulesSchedVars.keySet()) {
 				System.out.println(y);
 				for(JDDNode z : modulesSchedVars.get(y)) {
 					JDD.PrintMinterms(mainLog, z);
 				}
 			}
+			*/
 			/*** ***/
 			
 			// allocate internal nondet choice dd variables

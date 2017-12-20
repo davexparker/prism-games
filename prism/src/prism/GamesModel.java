@@ -1,5 +1,6 @@
 package prism;
 
+import java.util.Map;
 import java.util.Vector;
 
 import jdd.JDD;
@@ -13,12 +14,12 @@ public class GamesModel extends NondetModel {
 	private JDDNode[] ddPlayersIds;	// MTBDD for each player
 	private JDDVars[] playersVars;
 	private JDDNode idsTree;
-	private String[] playersNames;
+	private Map<Integer, String> playersNames;
 	private JDDVars allDDPlayersVars;
 	
 	public GamesModel(JDDNode tr, JDDNode s, JDDNode[] sr, JDDNode[] trr, String[] rsn, JDDVars arv, JDDVars acv, JDDVars asyv, JDDVars asv,
 					  JDDVars achv, JDDVars andv, ModelVariablesDD mvdd, int nm, String[] mn, JDDVars[] mrv, JDDVars[] mcv, int nv, 
-					  VarList vl, JDDVars[] vrv, JDDVars[] vcv, Values cv, JDDVars[] pvs, JDDNode[] dis, JDDNode idt, String[] pns) {
+					  VarList vl, JDDVars[] vrv, JDDVars[] vcv, Values cv, JDDVars[] pvs, JDDNode[] dis, JDDNode idt, Map<Integer, String> pns) {
 		super(tr, s, sr, trr, rsn, arv, acv, asyv, asv, achv, andv, mvdd, nm, mn, mrv,
 				mcv, nv, vl, vrv, vcv, cv);
 		// TODO Auto-generated constructor stub
@@ -39,7 +40,7 @@ public class GamesModel extends NondetModel {
 		return ModelType.SMG;
 	}
 	
-	public String[] getPlayersNames() {
+	public Map<Integer, String> getPlayersNames() {
 		return playersNames;
 	}
 	

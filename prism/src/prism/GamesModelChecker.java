@@ -32,6 +32,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import dv.DoubleVector;
 import explicit.MinMax;
@@ -41,10 +42,12 @@ import jdd.JDDVars;
 import mtbdd.PrismMTBDD;
 import parser.ast.Coalition;
 import parser.ast.Expression;
+import parser.ast.ExpressionFunc;
 import parser.ast.ExpressionProb;
 import parser.ast.ExpressionReward;
 import parser.ast.ExpressionStrategy;
 import parser.ast.ExpressionTemporal;
+import parser.ast.ExpressionUnaryOp;
 import parser.ast.ModulesFile;
 import parser.ast.PropertiesFile;
 import parser.ast.RelOp;
@@ -67,7 +70,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 	protected JDDNode ddc1;
 	protected JDDNode ddc2;
 	
-	protected String[] playersNames;
+	protected Map<Integer, String> playersNames;
 	protected int numPlayers;
 	
 	protected boolean precomp;
@@ -78,6 +81,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 	protected ModulesFile mFile;
 	
 	protected double epsilon;
+	protected boolean fairness;
 	
 	public GamesModelChecker(Prism prism, Model m, PropertiesFile pf) throws PrismException {
 		super(prism, m, pf);
@@ -109,43 +113,42 @@ public class GamesModelChecker extends NonProbModelChecker {
 		smc = new StateModelChecker(prism, model, pf);
 	}
 	
+	/******************************************************************* NEW COALITION ****************************************************************/
+	
 	// Model checking functions
 	
 	@Override
 	public StateValues checkExpression(Expression expr, JDDNode statesOfInterest) throws PrismException {
-		StateValues res = null;
-		RelOp rop = null;
+		StateValues res;
 
 		// <<>> or [[]] operator
 		if (expr instanceof ExpressionStrategy) {
-			ExpressionStrategy exprs = (ExpressionStrategy) expr;
-			if(exprs.getOperand(0) instanceof ExpressionProb) {
-				ExpressionProb exprp = (ExpressionProb) exprs.getOperand(0);
-				rop = exprp.getRelOp();
-			}
-			else if (exprs.getOperand(0) instanceof ExpressionReward) {
-				ExpressionReward exprr = (ExpressionReward) exprs.getOperand(0);
-				rop = exprr.getRelOp();
-			}
-			res = checkExpressionStrategy(exprs, rop);
+			res = checkExpressionStrategy((ExpressionStrategy) expr, statesOfInterest);
 		}
-		/*** NEEDS TO BE MODIFIED AT SOME POINT ***/
-		/*
 		// P operator
 		else if (expr instanceof ExpressionProb) {
-			//res = checkExpressionProb((ExpressionProb) expr);
+			res = checkExpressionProb((ExpressionProb) expr, statesOfInterest);
 		}
 		// R operator
 		else if (expr instanceof ExpressionReward) {
-			//res = checkExpressionReward((ExpressionReward) expr);
+			res = checkExpressionReward((ExpressionReward) expr, statesOfInterest);
 		}
-		*/
-		/*** NEEDS TO BE MODIFIED AT SOME POINT ***/
+		// Multi-objective
+		else if (expr instanceof ExpressionFunc) {
+			// Detect "multi" function
+			if (((ExpressionFunc) expr).getName().equals("multi")) {
+				throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
+			}
+			// For any other function, check as normal
+			else {
+				res = super.checkExpression(expr, statesOfInterest);
+			}
+		}
 		// Otherwise, use the superclass
 		else {
 			res = super.checkExpression(expr, statesOfInterest);
 		}
-		
+
 		// Filter out non-reachable states from solution
 		// (only necessary for symbolically stored vectors)
 		if (res instanceof StateValuesMTBDD)
@@ -155,144 +158,135 @@ public class GamesModelChecker extends NonProbModelChecker {
 	}
 	
 	/**
-	 * Model check a <<>> or [[]] operator expression and return the values for all states.
+	 * Model check a <<>> or [[]] operator expression.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
 	 */
-	
-	protected StateValues checkExpressionStrategy(ExpressionStrategy expr, RelOp rop) throws PrismException {
+	protected StateValues checkExpressionStrategy(ExpressionStrategy expr, JDDNode statesOfInterest) throws PrismException
+	{
 		// Will we be quantifying universally or existentially over strategies/adversaries?
 		boolean forAll = !expr.isThereExists();
-
-		ArrayList<ArrayList<Integer>> coalitions =  new ArrayList<ArrayList<Integer>>();
-		HashSet<String> plrs = new HashSet<String>();
 		
 		// Extract coalition info
 		Coalition coalition = expr.getCoalition();
 		// Deal with the coalition operator here and then remove it
-		
-		if (coalition != null) {
+		if (coalition != null && !model.getModelType().multiplePlayers()) {
 			if (coalition.isEmpty()) {
 				// An empty coalition negates the quantification ("*" has no effect)
 				forAll = !forAll;
-			} 
-			else {
-				/*** MODIFICATION ***/
-				
-				List<String> lcoalition = coalition.getPlayers();
-				coalitions.add(new ArrayList<Integer>());
-				coalitions.add(new ArrayList<Integer>());
-							
-				for(int i = 0; i < numPlayers; i++) {
-					if(rop.toString().equals("max=")) {
-						for(String pname : lcoalition) {
-							if(!plrs.contains(pname)) {
-								if(playersNames[i].equals(pname)) {
-									//System.out.println("Player " + pname + " added to coalition 0");
-									coalitions.get(0).add(i);
-									plrs.add(pname);
-								}
-							}
-						}
-						String pname = playersNames[i];
-						if(!plrs.contains(pname) && !lcoalition.contains(pname)) {
-							//System.out.println("Player " + pname + " added to coalition 1");
-							coalitions.get(1).add(i);
-							plrs.add(pname);
-						}
-					}
-					else {
-						for(String pname : lcoalition) {
-							if(!plrs.contains(pname)) {
-								if(playersNames[i].equals(pname)) {
-									//System.out.println("Player " + pname + " added to coalition 1");
-									coalitions.get(1).add(i);
-									plrs.add(pname);
-								}
-							}
-						}
-						String pname = playersNames[i];
-						if(!plrs.contains(pname) && !lcoalition.contains(pname)) {
-							//System.out.println("Player " + pname + " added to coalition 0");
-							coalitions.get(0).add(i);
-							plrs.add(pname);
-						}
-					}		
-				}
-			
 			}
-			coalition = null;		
+			coalition = null;
 		}
-
+		
 		// Process operand(s)
 		List<Expression> exprs = expr.getOperands();
 		// Pass onto relevant method:
 		// Single P operator
 		if (exprs.size() == 1 && exprs.get(0) instanceof ExpressionProb) {
-			return checkExpressionProb((ExpressionProb) exprs.get(0), coalitions, forAll);
+			return checkExpressionProb((ExpressionProb) exprs.get(0), forAll, statesOfInterest, coalition);
 		}
 		// Single R operator
 		else if (exprs.size() == 1 && exprs.get(0) instanceof ExpressionReward) {
-			return checkExpressionReward((ExpressionReward) exprs.get(0), forAll, coalitions);
+			return checkExpressionReward((ExpressionReward) exprs.get(0), forAll, statesOfInterest, coalition);
 		}
+		// Anything else is treated as multi-objective 
 		else {
-			return null;
-			
+			throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 		}
 	}
 	
 	/**
-	 * Model check a P operator expression and return the values for all states.
+	 * Model check a P operator expression.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
 	 */
-
-	protected StateValues checkExpressionProb(ExpressionProb expr, ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
+	protected StateValues checkExpressionProb(ExpressionProb expr, JDDNode statesOfInterest) throws PrismException
+	{
 		// Use the default semantics for a standalone P operator
 		// (i.e. quantification over all strategies)
-		return checkExpressionProb(expr, coalitions, true);
+		return checkExpressionProb(expr, true, statesOfInterest, null);
 	}
 	
 	/**
-	 * Model check a P operator expression and return the values for all states.
+	 * Model check a P operator expression.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
+	 *
 	 * @param expr The P operator expression
-	 * @param forAll Are we checking "for all strategies" (true) or "there exists a strategy" (false)? [irrelevant for numerical (=?) queries] 
+	 * @param forAll Are we checking "for all strategies" (true) or "there exists a strategy" (false)? [irrelevant for numerical (=?) queries]
 	 */
-	
-	protected StateValues checkExpressionProb(ExpressionProb expr, ArrayList<ArrayList<Integer>> coalitions, boolean forAll) throws PrismException {
+	protected StateValues checkExpressionProb(ExpressionProb expr, boolean forAll, JDDNode statesOfInterest, Coalition coalition) throws PrismException {
+		
 		// Get info from P operator
 		OpRelOpBound opInfo = expr.getRelopBoundInfo(constantValues);
-
-		/*** CHECK WHY THIS DOES NOT WORK ***/
-		MinMax minMax = opInfo.getMinMax(model.getModelType(), forAll, null);
+		MinMax minMax = opInfo.getMinMax(model.getModelType(), forAll, coalition);
+					
+		// Players get index i in the modulesfile and for the DD variables
+		// they're mapped to i+1 with respect to the name
 		
-		/***/
-		//System.out.println("RelOp Min/Max: " + expr.getRelOp().isMin() + " "  + expr.getRelOp().isMax());
-		/***/
+		ArrayList<ArrayList<Integer>> coalitions =  new ArrayList<ArrayList<Integer>>();
+		
+		coalitions.add(new ArrayList<Integer>());
+		coalitions.add(new ArrayList<Integer>());
 				
+		if(expr.getRelOp().toString().equals("max=")) { //has to be changed
+			//System.out.println("Pmax");
+			for(Integer i : playersNames.keySet()) {
+				if(coalition == null) {
+					coalitions.get(0).add(i-1);
+				}
+				else if(minMax.getCoalition().isPlayerIndexInCoalition(i, playersNames)) {
+					//System.out.println("Player " + i + " added to coalition 0");
+					coalitions.get(0).add(i-1);
+				}
+				else {
+					//System.out.println("Player " + i + " added to coalition 1");
+					coalitions.get(1).add(i-1);
+				}
+			}
+		}
+		else {
+			//System.out.println("Pmin");
+			for(Integer i : playersNames.keySet()) {
+				if(coalition == null) {
+					coalitions.get(1).add(i-1);
+				}
+				else if(minMax.getCoalition().isPlayerIndexInCoalition(i, playersNames)) {
+					//System.out.println("Player " + i + " added to coalition 1");
+					coalitions.get(1).add(i-1);
+				}
+				else {
+					//System.out.println("Player " + i + " added to coalition 0");
+					coalitions.get(0).add(i-1);
+				}
+			}
+		}
+		
 		// Check for trivial (i.e. stupid) cases
-		if(opInfo.isTriviallyTrue()) {
+
+		if (opInfo.isTriviallyTrue()) {
 			mainLog.printWarning("Checking for probability " + opInfo.relOpBoundString() + " - formula trivially satisfies all states");
 			JDD.Ref(reach);
+			JDD.Deref(statesOfInterest);
 			return new StateValuesMTBDD(reach, model);
 		} else if (opInfo.isTriviallyFalse()) {
 			mainLog.printWarning("Checking for probability " + opInfo.relOpBoundString() + " - formula trivially satisfies no states");
+			JDD.Deref(statesOfInterest);
 			return new StateValuesMTBDD(JDD.Constant(0), model);
 		}
 
 		// Compute probabilities
 		boolean qual = opInfo.isQualitative() && precomp && prob0 && prob1;
-		
-		/*** NEEDS CHANGING ***/
-		//System.out.println("Min/Max: " + minMax.isMin() + " " + minMax.isMax());
-		
-		//StateValues probs = checkProbPathFormula(expr.getExpression(), coalitions, qual, minMax.isMin());
-		StateValues probs = checkProbPathFormula(expr.getExpression(), coalitions, qual, expr.getRelOp().isMin());
-		
+		StateValues probs = checkProbPathFormula(expr.getExpression(), qual, minMax.isMin(), statesOfInterest, coalitions);
+
 		// Print out probabilities
-		if(verbose) {
+		if (verbose) {
 			mainLog.print("\n" + (minMax.isMin() ? "Minimum" : "Maximum") + " probabilities (non-zero only) for all states:\n");
 			probs.print(mainLog);
 		}
 
 		// For =? properties, just return values
-		if(opInfo.isNumeric()) {
+		if (opInfo.isNumeric()) {
 			return probs;
 		}
 		// Otherwise, compare against bound to get set of satisfying states
@@ -305,97 +299,83 @@ public class GamesModelChecker extends NonProbModelChecker {
 			probs.clear();
 			return new StateValuesMTBDD(sol, model);
 		}
-		/*** NEEDS CHANGING ***/
+	}
+
+	/**
+	 * Model check an R operator expression.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
+	 */
+	protected StateValues checkExpressionReward(ExpressionReward expr, JDDNode statesOfInterest) throws PrismException
+	{
+		// Use the default semantics for a standalone R operator
+		// (i.e. quantification over all strategies)
+	    return checkExpressionReward(expr, true, statesOfInterest, null);
 	}
 	
 	/**
-	 * Compute probabilities for the contents of a P operator. (This function was completely rewritten.)
+	 * Model check an R operator expression.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
+	 *
+	 * @param expr The R operator expression
+	 * @param forAll Are we checking "for all strategies" (true) or "there exists a strategy" (false)? [irrelevant for numerical (=?) queries]
 	 */
-	
-	protected StateValues checkProbPathFormula(Expression expr, ArrayList<ArrayList<Integer>> coalitions, boolean qual, boolean min) throws PrismException {
+	protected StateValues checkExpressionReward(ExpressionReward expr, boolean forAll, JDDNode statesOfInterest, Coalition coalition) throws PrismException
+	{
+		// Get info from R operator
+	        if(expr.getRewardStructIndexDiv() != null)
+		        throw new PrismException("Ratio rewards not supported with the selected engine and module type.");
+		OpRelOpBound opInfo = expr.getRelopBoundInfo(constantValues);
+		MinMax minMax = opInfo.getMinMax(model.getModelType(), forAll, coalition);
+
+		// Players get index i in the modulesfile and for the DD variables
+		// they're mapped to i+1 with respect to the name
 		
-		//Needs to be changed afterwards to include other types of formulae and have reachability with the Fc 
-		//operator as an LTL formula.
+		ArrayList<ArrayList<Integer>> coalitions =  new ArrayList<ArrayList<Integer>>();
 		
-		StateValues probs = null;
+		coalitions.add(new ArrayList<Integer>());
+		coalitions.add(new ArrayList<Integer>());
 				
-		if(qual) {
-			throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
+		if(expr.getRelOp().toString().equals("max=")) { //has to be changed
+			for(Integer i : playersNames.keySet()) {
+				if(coalition == null) {
+					coalitions.get(0).add(i-1);
+				}
+				else if(minMax.getCoalition().isPlayerIndexInCoalition(i, playersNames)) {
+					//System.out.println("Player " + i + " added to coalition 0");
+					coalitions.get(0).add(i-1);
+				}
+				else {
+					//System.out.println("Player " + i + " added to coalition 1");
+					coalitions.get(1).add(i-1);
+				}
+			}
 		}
 		else {
-			if(expr instanceof ExpressionTemporal) {
-				ExpressionTemporal exprTemp = (ExpressionTemporal) expr;
-				
-				//if(exprTemp.getOperatorSymbol().equals("F")) {
-				if(exprTemp.getOperator() == ExpressionTemporal.P_F) {
-					probs = computeProbReachFormula(expr, coalitions);
+			for(Integer i : playersNames.keySet()) {
+				if(coalition == null) {
+					coalitions.get(1).add(i-1);
 				}
-				else if(exprTemp.getOperator() == ExpressionTemporal.P_X) {
-					probs = checkProbNext(exprTemp, coalitions);
+				else if(minMax.getCoalition().isPlayerIndexInCoalition(i, playersNames)) {
+					//System.out.println("Player " + i + " added to coalition 1");
+					coalitions.get(1).add(i-1);
 				}
-				else if (exprTemp.getOperator() == ExpressionTemporal.P_U) {
-					if (exprTemp.hasBounds()) {
-						probs = checkProbBoundedUntil(exprTemp, min, coalitions);
-					} else {
-						probs = checkProbUntil(exprTemp, qual, min, coalitions);
-						//throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
-					}
+				else {
+					//System.out.println("Player " + i + " added to coalition 0");
+					coalitions.get(0).add(i-1);
 				}
-			}
-			else {
-				throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 			}
 		}
 		
-		if(probs == null)
-			throw new PrismException("Unrecognised path operator in P operator");
-		
-		return probs;
-	}
-	
-	protected StateValues computeProbReachFormula(Expression expr, ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
-		
-		StateValues probs = null;
-		JDDNode ts;
-		JDDNode ddv;
-		
-		ts = smc.checkExpressionDD(((ExpressionTemporal) expr).getOperand2(), model.getReach().copy());
-		//ddv = valueIterationCoalitions(ts, numPlayers, coalitions, epsilon);
-		//ddv = computeProbReachCoalitions(ts, numPlayers, coalitions, epsilon);
-		ddv = computeProbReachPlayers(ts, numPlayers, coalitions, epsilon, false, 0);
-		//ddv = valueIterationPlayers(ts, numPlayers, coalitions, epsilon);
-		
-		//ddv = BRTDP.noActBRTDP(start, null, ts, trans, ddsPlayers, nondetmask, null, null, reach, ddIds, allDDRowVars, allDDColVars, allDDNondetVars, coalitions);
-
-		ddv = JDD.SwapVariables(ddv, allDDColVars, allDDRowVars);
-		probs = new StateValuesMTBDD(ddv, model);
-		
-		return probs;
-	}
-	
-	/**
-	 * Model check an R operator expression and return the values for all states.
-	 * @param expr The R operator expression
-	 * @param forAll Are we checking "for all strategies" (true) or "there exists a strategy" (false)? [irrelevant for numerical (=?) queries] 
-	 */
-
-	protected StateValues checkExpressionReward(ExpressionReward expr, boolean forAll, ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
-		// Get info from R operator
-	    if(expr.getRewardStructIndexDiv() != null)
-	    	throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
-		OpRelOpBound opInfo = expr.getRelopBoundInfo(constantValues);
-		MinMax minMax = opInfo.getMinMax(model.getModelType(), forAll, null);
-
 		// Get rewards
 		Object rs = expr.getRewardStructIndex();
-		
 		JDDNode stateRewards = getStateRewardsByIndexObject(rs, model, constantValues);
 		JDDNode transRewards = getTransitionRewardsByIndexObject(rs, model, constantValues);
 
 		// Compute rewards
 		StateValues rewards = null;
-		Expression expr2 = expr.getExpression();
-		
+		Expression expr2 = expr.getExpression();	
 		if(expr2.getType() instanceof TypePathDouble) {
 			ExpressionTemporal exprTemp = (ExpressionTemporal) expr2;
 			switch (exprTemp.getOperator()) {
@@ -414,18 +394,37 @@ public class GamesModelChecker extends NonProbModelChecker {
 		else if(expr2.getType() instanceof TypePathBool || expr2.getType() instanceof TypeBool) {
 			throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 		}
+				
+		/*
+		if (expr2.getType() instanceof TypePathDouble) {
+			ExpressionTemporal exprTemp = (ExpressionTemporal) expr2;
+			switch (exprTemp.getOperator()) {
+			case ExpressionTemporal.R_C:
+				if (exprTemp.hasBounds()) {
+					rewards = checkRewardCumul(exprTemp, stateRewards, transRewards, minMax.isMin(), statesOfInterest, coalitions);
+				} else {
+					rewards = checkRewardTotal(exprTemp, stateRewards, transRewards, minMax.isMin(), statesOfInterest, coalitions);
+				}
+				break;
+			case ExpressionTemporal.R_I:
+				rewards = checkRewardInst(exprTemp, stateRewards, transRewards, minMax.isMin(), statesOfInterest);
+			}
+		} else if (expr2.getType() instanceof TypePathBool || expr2.getType() instanceof TypeBool) {
+			rewards = checkRewardPathFormula(expr2, stateRewards, transRewards, minMax.isMin(), statesOfInterest);
+		}
+		*/
 
-		if(rewards == null)
+		if (rewards == null)
 			throw new PrismException("Unrecognised operator in R operator");
 
 		// print out rewards
-		if(verbose) {
+		if (verbose) {
 			mainLog.print("\n" + (minMax.isMin() ? "Minimum" : "Maximum") + " rewards (non-zero only) for all states:\n");
 			rewards.print(mainLog);
 		}
 
 		// For =? properties, just return values
-		if(opInfo.isNumeric()) {
+		if (opInfo.isNumeric()) {
 			return rewards;
 		}
 		// Otherwise, compare against bound to get set of satisfying states
@@ -440,10 +439,359 @@ public class GamesModelChecker extends NonProbModelChecker {
 		}
 	}
 	
+	// Model checking functions
+	
+	/**
+	 * Compute probabilities for the contents of a P operator.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
+	 */
+	protected StateValues checkProbPathFormula(Expression expr, boolean qual, boolean min, JDDNode statesOfInterest, ArrayList<ArrayList<Integer>> coalitions) throws PrismException
+	{
+		// No support for reward-bounded path formulas (i.e. of the form R(path)~r)
+		if (Expression.containsRewardBoundedPathFormula(expr)) {
+			throw new PrismException("Reward-bounded path formulas not supported");
+		}
+		
+		// Test whether this is a simple path formula (i.e. PCTL)
+		// and whether we want to use the corresponding algorithms
+		boolean useSimplePathAlgo = expr.isSimplePathFormula();
+
+		if (useSimplePathAlgo &&
+		    prism.getSettings().getBoolean(PrismSettings.PRISM_PATH_VIA_AUTOMATA) &&
+		    LTLModelChecker.isSupportedLTLFormula(model.getModelType(), expr)) {
+			// If PRISM_PATH_VIA_AUTOMATA is true, we want to use the LTL engine
+			// whenever possible
+			useSimplePathAlgo = false;
+		}
+
+		if (useSimplePathAlgo) {
+			return checkProbPathFormulaSimple(expr, qual, min, statesOfInterest, coalitions);
+		} else {
+			/*
+			return checkProbPathFormulaLTL(expr, qual, min, statesOfInterest);
+			*/
+			throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
+		}
+	}
+
+	/**
+	 * Compute probabilities for a simple, non-LTL path operator.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
+	 */
+	protected StateValues checkProbPathFormulaSimple(Expression expr, boolean qual, boolean min, JDDNode statesOfInterest, ArrayList<ArrayList<Integer>> coalitions) throws PrismException
+	{
+		boolean negated = false;
+		StateValues probs = null;
+
+		expr = Expression.convertSimplePathFormulaToCanonicalForm(expr);
+
+		// Negation
+		if (expr instanceof ExpressionUnaryOp &&
+		    ((ExpressionUnaryOp)expr).getOperator() == ExpressionUnaryOp.NOT) {
+			// mark as negated, switch from min to max and vice versa
+			negated = true;
+			min = !min;
+			expr = ((ExpressionUnaryOp)expr).getOperand();
+		}
+
+		if (expr instanceof ExpressionTemporal) {
+			ExpressionTemporal exprTemp = (ExpressionTemporal) expr;
+			// Next
+			if (exprTemp.getOperator() == ExpressionTemporal.P_X) {
+				probs = checkProbNext(exprTemp, statesOfInterest, coalitions);
+			}
+			// Until
+			else if (exprTemp.getOperator() == ExpressionTemporal.P_U) {
+				if (exprTemp.hasBounds()) {
+					probs = checkProbBoundedUntil(exprTemp, min, statesOfInterest, coalitions);
+
+				} else {
+					probs = checkProbUntil(exprTemp, qual, min, statesOfInterest, coalitions);
+				}
+			}
+		}
+
+		if (probs == null)
+			throw new PrismException("Unrecognised path operator in P operator");
+
+		if (negated) {
+			// Subtract from 1 for negation
+			probs.subtractFromOne();
+		}
+
+		return probs;
+	}
+	
+	/**
+	 * Compute rewards for a reachability reward operator (either simple reachability or co-safe LTL).
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
+	 */
+	/*
+	protected StateValues checkRewardPathFormula(Expression expr, JDDNode stateRewards, JDDNode transRewards, boolean min, JDDNode statesOfInterest) throws PrismException
+	{
+		if (Expression.isReach(expr)) {
+			return checkRewardReach((ExpressionTemporal) expr, stateRewards, transRewards, min, statesOfInterest);
+		}
+		else if (Expression.isCoSafeLTLSyntactic(expr, true)) {
+			return checkRewardCoSafeLTL(expr, stateRewards, transRewards, min, statesOfInterest);
+		}
+		JDD.Deref(statesOfInterest);
+		throw new PrismException("R operator contains a path formula that is not syntactically co-safe: " + expr);
+	}
+	 */
+	/**
+	 * Compute rewards for a reachability reward operator.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
+	 */
+	/*
+	protected StateValues checkRewardReach(ExpressionTemporal expr, JDDNode stateRewards, JDDNode transRewards, boolean min, JDDNode statesOfInterest) throws PrismException {
+		
+		JDDNode b;
+		StateValues rewards = null;
+
+		if (fairness && !min) {
+			// Rmax with fairness not supported; Rmin computation is unaffected
+			JDD.Deref(statesOfInterest);
+			throw new PrismNotSupportedException("Maximum reward computation currently not supported under fairness.");
+		}
+
+		// currently, ignore statesOfInterest
+		JDD.Deref(statesOfInterest);
+
+		// No time bounds allowed
+		if (expr.hasBounds()) {
+			throw new PrismNotSupportedException("R operator cannot contain a bounded F operator: " + expr);
+		}
+		
+		// model check operand first, statesOfInterest = all
+		b = checkExpressionDD(expr.getOperand2(), model.getReach().copy());
+
+		// print out some info about num states
+		// mainLog.print("\nb = " + JDD.GetNumMintermsString(b,
+		// allDDRowVars.n()) + " states\n");
+
+		// compute rewards
+		try {
+			rewards = computeReachRewards(trans, transActions, trans01, stateRewards, transRewards, b, min);
+			if(true)
+				throw new PrismException("Compute Reach Rewards");
+		} catch (PrismException e) {
+			JDD.Deref(b);
+			throw e;
+		}
+
+		// derefs
+		JDD.Deref(b);
+
+		return rewards;
+	}
+	*/
+	/**
+	 * Compute rewards for a cumulative reward operator.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
+	 */
+	protected StateValues checkRewardCumul(ExpressionTemporal expr, JDDNode stateRewards, JDDNode transRewards, boolean min, JDDNode statesOfInterest) throws PrismException
+	{
+		int time; // time
+		StateValues rewards = null;
+
+		// currently, ignore statesOfInterest
+		JDD.Deref(statesOfInterest);
+
+		// check that there is an upper time bound
+		if (expr.getUpperBound() == null) {
+		        throw new PrismException("Cumulative reward operator without time bound (C) not supported");
+		}
+
+		// get info from inst reward
+		time = expr.getUpperBound().evaluateInt(constantValues);
+		if (time < 0) {
+			throw new PrismException("Invalid time bound " + time + " in cumulative reward formula");
+		}
+
+		// a trivial case: "<=0"
+		if (time == 0) {
+			rewards = new StateValuesMTBDD(JDD.Constant(0), model);
+		} else {
+			// compute rewards
+			try {
+				//rewards = computeCumulRewards(trans, stateRewards, transRewards, time, min);
+				if(true)
+					throw new PrismException("Compute Cumul Rewards");
+			} catch (PrismException e) {
+				throw e;
+			}
+		}
+
+		return rewards;
+	}
+	
+	/**
+	 * Compute rewards for a total reward operator.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
+	 */
+	protected StateValues checkRewardTotal(ExpressionTemporal expr, JDDNode stateRewards, JDDNode transRewards, boolean min, JDDNode statesOfInterest) throws PrismException
+	{
+		// currently, ignore statesOfInterest
+		JDD.Deref(statesOfInterest);
+		StateValues rewards;
+		//rewards = computeTotalRewards(trans, trans01, transActions, stateRewards, transRewards, min);
+		if(true)
+			throw new PrismException("Compute Cumul Rewards");
+		return rewards;
+	}
+	
+	/**
+	 * Compute probabilities for an (unbounded) until operator.
+	 * Note: This method is split into two steps so that the LTL model checker can use the second part directly.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
+	 */
+	protected StateValues checkProbUntil(ExpressionTemporal expr, boolean qual, boolean min, JDDNode statesOfInterest, ArrayList<ArrayList<Integer>> coalitions) throws PrismException
+	{
+		JDDNode b1, b2;
+		StateValues probs = null;
+
+		// currently, ignore statesOfInterest
+		JDD.Deref(statesOfInterest);
+
+		// model check operands first
+		b1 = checkExpressionDD(expr.getOperand1(), model.getReach().copy());
+		try {
+			b2 = checkExpressionDD(expr.getOperand2(), model.getReach().copy());
+		} catch (PrismException e) {
+			JDD.Deref(b1);
+			throw e;
+		}
+
+		// print out some info about num states
+		// mainLog.print("\nb1 = " + JDD.GetNumMintermsString(b1,
+		// allDDRowVars.n()));
+		// mainLog.print(" states, b2 = " + JDD.GetNumMintermsString(b2,
+		// allDDRowVars.n()) + " states\n");
+
+		try {
+			probs = computeProbUntil(b1, b2, qual, min, coalitions);
+		} catch (PrismException e) {
+			JDD.Deref(b1);
+			JDD.Deref(b2);
+			throw e;
+		}
+
+		// derefs
+		JDD.Deref(b1);
+		JDD.Deref(b2);
+
+		return probs;
+	}
+	
+	/**
+	 * Compute probabilities for a bounded until operator.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
+	 */
+	protected StateValues checkProbBoundedUntil(ExpressionTemporal expr, boolean min, JDDNode statesOfInterest, ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
+		JDDNode b1, b2;
+		StateValues probs = null;
+		Integer lowerBound;
+		IntegerBound bounds;
+		int i;
+
+		// currently, ignore statesOfInterest
+		JDD.Deref(statesOfInterest);
+
+		// get and check bounds information
+		bounds = IntegerBound.fromExpressionTemporal(expr, constantValues, true);
+
+		// model check operands first, statesOfInterest = all
+		b1 = checkExpressionDD(expr.getOperand1(), model.getReach().copy());
+		try {
+			b2 = checkExpressionDD(expr.getOperand2(), model.getReach().copy());
+		} catch (PrismException e) {
+			JDD.Deref(b1);
+			throw e;
+		}
+
+		// print out some info about num states
+		// mainLog.print("\nb1 = " + JDD.GetNumMintermsString(b1,
+		// allDDRowVars.n()));
+		// mainLog.print(" states, b2 = " + JDD.GetNumMintermsString(b2,
+		// allDDRowVars.n()) + " states\n");
+
+		if (bounds.hasLowerBound()) {
+			lowerBound = bounds.getLowestInteger();
+		} else {
+			lowerBound = 0;
+		}
+
+		Integer windowSize = null;  // unbounded
+		if (bounds.hasUpperBound()) {
+			windowSize = bounds.getHighestInteger() - lowerBound;
+		}
+
+		// compute probabilities for Until<=windowSize
+		if (windowSize == null) {
+			// unbounded
+			try {
+				/*
+				probs = checkProbUntil(b1, b2, false, min, coalitions);
+				*/
+				probs = computeProbUntil(b1, b2, false, min, coalitions);
+			} catch (PrismException e) {
+				JDD.Deref(b1);
+				JDD.Deref(b2);
+				throw e;
+			}
+		} else if (windowSize == 0) {
+			// the trivial case: windowSize = 0
+			// prob is 1 in b2 states, 0 otherwise
+			JDD.Ref(b2);
+			probs = new StateValuesMTBDD(b2, model);
+		} else {
+			try {
+				/*
+				probs = computeBoundedUntilProbs(trans, trans01, b1, b2, windowSize, min);
+				*/
+				probs = computeBoundedUntilProbs(trans, trans01, b1, b2, windowSize, min, coalitions);
+			} catch (PrismException e) {
+				JDD.Deref(b1);
+				JDD.Deref(b2);
+				throw e;
+			}
+		}
+
+		/*
+		// perform lowerBound restricted next-step computations to
+		// deal with lower bound.
+		if (lowerBound > 0) {
+			for (i = 0; i < lowerBound; i++) {
+				probs = computeRestrictedNext(trans, b1, probs, min);
+			}
+		}
+		*/
+
+		// derefs
+		JDD.Deref(b1);
+		JDD.Deref(b2);
+
+		return probs;
+	}
+	
+	/*
+			throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
+	*/
+
+	/******************************************************************* NEW COALITION ****************************************************************/
+	
 	/**
 	 * Compute rewards for a cumulative reward operator.
 	 */
-	
 	protected StateValues checkRewardCumul(ExpressionTemporal expr, JDDNode stateRewards, JDDNode transRewards, 
 										   ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
 	
@@ -461,10 +809,10 @@ public class GamesModelChecker extends NonProbModelChecker {
 
 	/**
 	 * Compute rewards for a total reward operator.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
 	 */
-	
 	protected StateValues checkRewardTotal(JDDNode stateRewards, JDDNode transRewards, 
-										   ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
+										  ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
 		
 		StateValues rewards = computeTotalRewards(trans, trans01, stateRewards, transRewards, coalitions);
 		
@@ -472,13 +820,17 @@ public class GamesModelChecker extends NonProbModelChecker {
 	}
 	
 	/**
-	 * Compute probabilities for a next operator
+	 * Compute probabilities for a next operator.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
+	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
 	 */
-	
-	protected StateValues checkProbNext(ExpressionTemporal expr, ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
+	protected StateValues checkProbNext(ExpressionTemporal expr, JDDNode statesOfInterest, ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
 		
 		JDDNode b;
 		StateValues probs = null;
+		
+		// currently, ignore statesOfInterest
+		JDD.Deref(statesOfInterest);
 		
 		b = checkExpressionDD(expr.getOperand2(), model.getReach().copy());
 		probs = computeNextProbs(b, coalitions);
@@ -490,8 +842,8 @@ public class GamesModelChecker extends NonProbModelChecker {
 	
 	/**
 	 * Compute probabilities for a bounded until operator.
+	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
 	 */
-	
 	protected StateValues checkProbBoundedUntil(ExpressionTemporal expr, boolean min, ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
 		JDDNode b1, b2;
 		StateValues probs = null;
@@ -513,10 +865,10 @@ public class GamesModelChecker extends NonProbModelChecker {
 		}
 
 		// print out some info about num states
-		 mainLog.print("\nb1 = " + JDD.GetNumMintermsString(b1,
-		 allDDRowVars.n()));
-		 mainLog.print(" states, b2 = " + JDD.GetNumMintermsString(b2,
-		 allDDRowVars.n()) + " states\n");
+		// mainLog.print("\nb1 = " + JDD.GetNumMintermsString(b1,
+		// allDDRowVars.n()));
+		// mainLog.print(" states, b2 = " + JDD.GetNumMintermsString(b2,
+		// allDDRowVars.n()) + " states\n");
 
 		if (bounds.hasLowerBound()) {
 			lowerBound = bounds.getLowestInteger();
@@ -578,10 +930,29 @@ public class GamesModelChecker extends NonProbModelChecker {
 		return probs;
 	}
 	
+	protected StateValues computeProbReachFormula(Expression expr, ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
+		
+		StateValues probs = null;
+		JDDNode ts;
+		JDDNode ddv;
+		
+		ts = smc.checkExpressionDD(((ExpressionTemporal) expr).getOperand2(), model.getReach().copy());
+		//ddv = valueIterationCoalitions(ts, numPlayers, coalitions, epsilon);
+		//ddv = computeProbReachCoalitions(ts, numPlayers, coalitions, epsilon);
+		ddv = computeProbReachPlayers(ts, numPlayers, coalitions, epsilon, false, 0);
+		//ddv = valueIterationPlayers(ts, numPlayers, coalitions, epsilon);
+		
+		//ddv = BRTDP.noActBRTDP(start, null, ts, trans, ddsPlayers, nondetmask, null, null, reach, ddIds, allDDRowVars, allDDColVars, allDDNondetVars, coalitions);
+
+		ddv = JDD.SwapVariables(ddv, allDDColVars, allDDRowVars);
+		probs = new StateValuesMTBDD(ddv, model);
+		
+		return probs;
+	}
+	
 	/**
 	 * Compute probabilities for an (unbounded) until operator.
 	 */
-	
 	protected StateValues checkProbUntil(ExpressionTemporal expr, boolean qual, boolean min, ArrayList<ArrayList<Integer>> coalitions) throws PrismException {
 		JDDNode b1, b2;
 		StateValues probs = null;
