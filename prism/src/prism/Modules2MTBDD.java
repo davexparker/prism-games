@@ -342,7 +342,7 @@ public class Modules2MTBDD
 		if(modelType == ModelType.SMG) {
 			buildDDGame();
 		}
-		
+				
 		// get rid of any nondet dd variables not needed
 		if (modelType == ModelType.MDP || modelType == ModelType.SMG) {
 			tmp = JDD.GetSupport(trans);
@@ -463,6 +463,14 @@ public class Modules2MTBDD
 		JDD.DerefArray(varRangeDDs, numVars);
 		JDD.DerefArray(varColRangeDDs, numVars);
 		JDD.Deref(range);
+		/*
+		if (modelType == ModelType.SMG) {
+			for(int player = 0; player < ddPlayersIds.length; player++) {
+				JDD.Deref(ddPlayersIds[player]);
+			}
+			JDDVars.derefAllArray(playersVars);	
+		}
+		*/
 		if (modelType == ModelType.MDP || modelType == ModelType.SMG) {
 			JDD.DerefArray(ddSynchVars, ddSynchVars.length);
 			JDD.DerefArray(ddSchedVars, ddSchedVars.length);
@@ -551,6 +559,7 @@ public class Modules2MTBDD
 					ddSchedVars[i] = modelVariables.allocateVariable(moduleNames[i] + ".s");
 					
 					/*** ***/
+					/*
 					if(!modulesSchedVars.keySet().contains(moduleNames[i])) {
 						modulesSchedVars.put(i, new ArrayList<JDDNode>());
 						modulesSchedVars.get(i).add(ddSchedVars[i]);
@@ -558,6 +567,7 @@ public class Modules2MTBDD
 					else {
 						modulesSchedVars.get(i).add(ddSchedVars[i]);
 					}
+					*/
 					/*** ***/
 				}
 			}

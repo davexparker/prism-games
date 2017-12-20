@@ -147,25 +147,24 @@ public class StateModelChecker extends PrismComponent implements ModelChecker
 		this.constantValues = constantValues;
 		// Create dummy model
 		reach = null;
-		JDDNode n = JDD.Constant(0);
-		model = new ProbModel(n,  // trans
-							  n,  // start
-		                      new JDDNode[] {}, // state-rew
-		                      new JDDNode[] {}, // trans-rew
-		                      null,             // rewardStructNames
-		                      allDDRowVars.copy(), // allDDRowVars
-		                      new JDDVars(),    // allDDColVars
-		                      null,             // ddVarNames
-		                      0,                // numModules
-		                      null,             // moduleNames
-		                      null,             // moduleRowVars
-		                      null,             // moduleColVars
-		                      varDDRowVars.length, // numVars
-		                      varList,          // varList
-		                      varDDRowVars, // varDDRowVars //JDDVars.copyArray(varDDRowVars)
-		                      null,             // varDDColVars
-		                      constantValues    // constantValues
-		                     );
+		model = new ProbModel(JDD.Constant(0),  // trans
+                				 JDD.Constant(0),  // start
+                				 new JDDNode[] {}, // state-rew
+                				 new JDDNode[] {}, // trans-rew
+                				 null,             // rewardStructNames
+                				 allDDRowVars.copy(), // allDDRowVars
+                				 new JDDVars(),    // allDDColVars
+                				 null,             // ddVarNames
+                				 0,                // numModules
+                				 null,             // moduleNames
+                				 null,             // moduleRowVars
+                				 null,             // moduleColVars
+                				 varDDRowVars.length, // numVars
+                				 varList,          // varList
+                				 JDDVars.copyArray(varDDRowVars), // varDDRowVars
+                				 null,             // varDDColVars
+                				 constantValues    // constantValues
+							);
 	}
 
 	/**

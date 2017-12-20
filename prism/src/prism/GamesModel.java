@@ -26,13 +26,7 @@ public class GamesModel extends NondetModel {
 		playersVars = pvs;
 		ddPlayersIds = dis;
 		idsTree = idt;
-		playersNames = pns;
-		allDDPlayersVars = new JDDVars();
-		
-		for(JDDVars v : playersVars) {
-			allDDPlayersVars.addVar(v.toCubeSet());
-		}
-		
+		playersNames = pns;		
 	}
 
 	public ModelType getModelType()
@@ -66,6 +60,12 @@ public class GamesModel extends NondetModel {
 
 	public NondetModel STG2MDP() throws PrismException {
 		
+		allDDPlayersVars = new JDDVars();
+		
+		for(JDDVars v : playersVars) {
+			allDDPlayersVars.addVar(v.toCubeSet());
+		}
+		
 		JDDNode transMDP = JDD.SumAbstract(trans.copy(), allDDPlayersVars);
 		JDDNode transRewardsMDP[] = new JDDNode[transRewards.length];
 
@@ -97,14 +97,15 @@ public class GamesModel extends NondetModel {
 	}
 	
 	@Override
-	public void clear()
-	{
+	public void clear() {
 		super.clear();
 		for(int i = 0; i < ddPlayersIds.length; i++) {
 			JDD.Deref(ddPlayersIds[i]);
 		}
 		JDDVars.derefAllArray(playersVars);
-		allDDPlayersVars.derefAll();
+		if(allDDPlayersVars != null) {
+			allDDPlayersVars.derefAll();
+		}
 		JDD.Deref(idsTree);
 	}
 }

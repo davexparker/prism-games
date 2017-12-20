@@ -112,9 +112,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 		
 		smc = new StateModelChecker(prism, model, pf);
 	}
-	
-	/******************************************************************* NEW COALITION ****************************************************************/
-	
+		
 	// Model checking functions
 	
 	@Override
@@ -228,8 +226,11 @@ public class GamesModelChecker extends NonProbModelChecker {
 		
 		coalitions.add(new ArrayList<Integer>());
 		coalitions.add(new ArrayList<Integer>());
-				
-		if(expr.getRelOp().toString().equals("max=")) { //has to be changed
+						
+		System.out.println("isMax: " + minMax.isMax());
+		System.out.println("isMin: " + minMax.isMin());
+		
+		if(expr.getRelOp().toString().equals("max=") || expr.getRelOp().toString().equals(">=") ) { //has to be changed
 			//System.out.println("Pmax");
 			for(Integer i : playersNames.keySet()) {
 				if(coalition == null) {
@@ -337,7 +338,10 @@ public class GamesModelChecker extends NonProbModelChecker {
 		coalitions.add(new ArrayList<Integer>());
 		coalitions.add(new ArrayList<Integer>());
 				
-		if(expr.getRelOp().toString().equals("max=")) { //has to be changed
+		System.out.println("isMax: " + minMax.isMax());
+		System.out.println("isMin: " + minMax.isMin());
+		
+		if(expr.getRelOp().toString().equals("max=") || expr.getRelOp().toString().equals(">=")) { //has to be changed
 			for(Integer i : playersNames.keySet()) {
 				if(coalition == null) {
 					coalitions.get(0).add(i-1);
@@ -381,10 +385,14 @@ public class GamesModelChecker extends NonProbModelChecker {
 			switch (exprTemp.getOperator()) {
 			case ExpressionTemporal.R_C:
 				if(!exprTemp.hasBounds()) {
+					//currently ignoring states of interest
+					JDD.Deref(statesOfInterest);
 					rewards = checkRewardTotal(stateRewards, transRewards, coalitions);
 				}
 				break;
 			case ExpressionTemporal.R_Fc:		
+				//currently ignoring states of interest
+				JDD.Deref(statesOfInterest);
 				rewards = checkRewardCumul(exprTemp, stateRewards, transRewards, coalitions);
 				break;
 			default:	
@@ -595,8 +603,8 @@ public class GamesModelChecker extends NonProbModelChecker {
 	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
 	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
 	 */
-	protected StateValues checkRewardCumul(ExpressionTemporal expr, JDDNode stateRewards, JDDNode transRewards, boolean min, JDDNode statesOfInterest) throws PrismException
-	{
+	/*
+	protected StateValues checkRewardCumul(ExpressionTemporal expr, JDDNode stateRewards, JDDNode transRewards, boolean min, JDDNode statesOfInterest) throws PrismException {
 		int time; // time
 		StateValues rewards = null;
 
@@ -630,14 +638,14 @@ public class GamesModelChecker extends NonProbModelChecker {
 
 		return rewards;
 	}
-	
+	*/
 	/**
 	 * Compute rewards for a total reward operator.
 	 * The result will have valid results at least for the states of interest (use model.getReach().copy() for all reachable states)
 	 * <br>[ REFS: <i>result</i>, DEREFS: statesOfInterest ]
 	 */
-	protected StateValues checkRewardTotal(ExpressionTemporal expr, JDDNode stateRewards, JDDNode transRewards, boolean min, JDDNode statesOfInterest) throws PrismException
-	{
+	/*
+	protected StateValues checkRewardTotal(ExpressionTemporal expr, JDDNode stateRewards, JDDNode transRewards, boolean min, JDDNode statesOfInterest) throws PrismException {
 		// currently, ignore statesOfInterest
 		JDD.Deref(statesOfInterest);
 		StateValues rewards;
@@ -646,7 +654,7 @@ public class GamesModelChecker extends NonProbModelChecker {
 			throw new PrismException("Compute Cumul Rewards");
 		return rewards;
 	}
-	
+	*/
 	/**
 	 * Compute probabilities for an (unbounded) until operator.
 	 * Note: This method is split into two steps so that the LTL model checker can use the second part directly.
@@ -786,8 +794,6 @@ public class GamesModelChecker extends NonProbModelChecker {
 	/*
 			throw new PrismNotSupportedException("Not currently supported by the MTBDD engine");
 	*/
-
-	/******************************************************************* NEW COALITION ****************************************************************/
 	
 	/**
 	 * Compute rewards for a cumulative reward operator.
@@ -1808,6 +1814,8 @@ public class GamesModelChecker extends NonProbModelChecker {
 		JDD.Deref(strw);
 		JDD.Deref(nondetmask);
 		
+		//JDD.PrintMinterms(mainLog, r.copy());
+		
 		//JDD.Deref(r);
 		return r;
 	}
@@ -1861,8 +1869,6 @@ public class GamesModelChecker extends NonProbModelChecker {
 	}
 	
 	public JDDNode computeBoundedUntilProbs(JDDNode phi1, JDDNode phi2, int l, int numplayers, ArrayList<ArrayList<Integer>> coalitions) {
-
-		//System.out.println("Symbolic Bounded Until...");
 		
 		int i;
 		
@@ -1939,10 +1945,10 @@ public class GamesModelChecker extends NonProbModelChecker {
 
 		//System.out.println("Convergence after " + i + " iterations.");
 		
-		JDD.Deref(phi2);
-		JDD.Deref(r);
+		//JDD.Deref(phi2);
+		//JDD.Deref(r);
 		JDD.Deref(tr);
-
+		
 		r = JDD.SwapVariables(r, allDDColVars, allDDRowVars);
 		
 		return r;
