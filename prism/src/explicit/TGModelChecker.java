@@ -3,6 +3,7 @@
 //	Copyright (c) 2020-
 //	Authors:
 //	* Dave Parker <d.a.parker@cs.bham.ac.uk> (University of Birmingham)
+//	* Shahram Javed <msj812@student.bham.ac.uk> (University of Birmingham)
 //	
 //------------------------------------------------------------------------------
 //	
@@ -41,8 +42,18 @@ import prism.PrismNotSupportedException;
 /**
  * Explicit-state model checker for turn-based games (TGs).
  */
-public class TGModelChecker extends  NonProbModelChecker
+public class TGModelChecker extends NonProbModelChecker
 {
+
+	/** Reachability Game Algorithm */
+	private final RGSolver reachabilitySolver = new RGSolver(this);
+	/** Parity Game Algorithm: Zielonka's Recursive */
+	private final PGSolver zielonkaRecursiveSolver = new ZielonkaRecursiveSolver(this);
+	/** Parity Game Algorithm: Priority Promotion */
+	private final PGSolver priorityPromotionSolver = new PriorityPromotionSolver(this);
+	/** Parity Game Algorithm: Small Progress Measures  */
+	private final PGSolver smallProgressMeasuresSolver = new SmallProgressMeasuresSolver(this);
+
 	/**
 	 * Create a new TGModelChecker, inherit basic state from parent (unless null).
 	 */
@@ -79,14 +90,14 @@ public class TGModelChecker extends  NonProbModelChecker
 		// Only support <<>> right now, not [[]]
 		if (!expr.isThereExists())
 			throw new PrismNotSupportedException("The " + expr.getOperatorString() + " operator is not yet supported");
-		
+
 		// Multiple (>2) coalitions not supported
 		if (expr.getNumCoalitions() > 1) {
 			throw new PrismNotSupportedException("The " + expr.getOperatorString() + " operator can only contain one coalition");
 		}
 		// Extract coalition info
 		Coalition coalition = expr.getCoalition();
-		
+
 		// For now, just support a single path formula in parentheses for now
 		List<Expression> exprs = expr.getOperands();
 		if (exprs.size() > 1) {
@@ -103,7 +114,7 @@ public class TGModelChecker extends  NonProbModelChecker
 		}
 		return checkReach(model, (ExpressionTemporal) exprSub, coalition, statesOfInterest);
 	}
-	
+
 	/**
 	 * Model check a reachability temporal operator from, inside a <<>> 
 	 */
@@ -111,13 +122,13 @@ public class TGModelChecker extends  NonProbModelChecker
 	{
 		// Model check operands for all states
 		BitSet target = checkExpression(model, expr.getOperand2(), null).getBitSet();
-		
+
 		// Compute/return the result
-		BitSet result = computeReach((TG) model, target);
-		
+		BitSet result = computeReach((TG) model, target, coalition);
+
 		return StateValues.createFromBitSet(result, model);
 	}
-	
+
 	/**
 	 * Compute reachability
 	 * @param tg TG
@@ -132,7 +143,7 @@ public class TGModelChecker extends  NonProbModelChecker
 		tg.setCoalition(null);
 		return res;
 	}
-	
+
 	/**
 	 * Compute 2-player reachability
 	 * @param tg 2-player TG
@@ -140,8 +151,45 @@ public class TGModelChecker extends  NonProbModelChecker
 	 */
 	protected BitSet computeReach(TG tg, BitSet target) throws PrismException
 	{
-		BitSet res = new BitSet();
-		res.set(0);
+		RG rg = new RG(tg, target);
+		TGSolution soln = reachabilitySolver.solve(rg);
+		// Log the solution
+		mainLog.println(soln);
+		// Compute solution as Player 1
+		return soln.get(0).getRegion();
+	}
+
+	/**
+	 * Compute parity
+	 * @param tg 2-player TG
+	 * @param priorities State priorities
+	 * @param coalition Players trying to reach the target
+	 */
+	protected BitSet computeParity(TG tg, List<Integer> priorities, Coalition coalition) throws PrismException
+	{
+		// Temporarily make the model a 2-player TG (if not already) by setting coalition
+		tg.setCoalition(coalition);
+		BitSet res = computeParity(tg, priorities);
+		tg.setCoalition(null);
 		return res;
 	}
+
+	/**
+	 * Compute 2-player parity
+	 * @param tg 2-player TG
+	 * @param priorities List of priorities
+	 */
+	protected BitSet computeParity(TG tg, List<Integer> priorities) throws PrismException
+	{
+		PG pg = new PG(tg, priorities);
+		// Parity game algorithms can be swapped here
+		TGSolution soln = zielonkaRecursiveSolver.solve(pg);
+		// TGSolution soln = priorityPromotionSolver.solve(pg);
+		// TGSolution soln = smallProgressMeasuresSolver.solve(pg);
+		// Log the solution
+		mainLog.println(soln);
+		// Compute solution as Player 1
+		return soln.get(0).getRegion();
+	}
+
 }

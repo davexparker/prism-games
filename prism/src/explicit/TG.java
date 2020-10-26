@@ -3,7 +3,8 @@
 //	Copyright (c) 2020-
 //	Authors:
 //	* Dave Parker <d.a.parker@cs.bham.ac.uk> (University of Birmingham)
-//	
+//	* Shahram Javed <msj812@student.bham.ac.uk> (University of Birmingham)
+//
 //------------------------------------------------------------------------------
 //	
 //	This file is part of PRISM.
@@ -30,6 +31,7 @@ import prism.ModelType;
 import prism.PlayerInfoOwner;
 import prism.PrismException;
 
+import java.util.BitSet;
 import java.util.Iterator;
 import java.util.Map.Entry;
 
@@ -39,7 +41,7 @@ import java.util.Map.Entry;
 public interface TG<Value> extends LTS<Value>, PlayerInfoOwner, TurnBasedGame
 {
 	// Accessors (for Model) - default implementations
-	
+
 	@Override
 	default ModelType getModelType()
 	{
@@ -51,11 +53,39 @@ public interface TG<Value> extends LTS<Value>, PlayerInfoOwner, TurnBasedGame
 	{
 		throw new UnsupportedOperationException();
 	}
-	
+
 	// Accessors
-	
+
+	/**
+	 * Get the active states.
+	 * This is useful to see what states are still present in subgames.
+	 */
+	public BitSet getActiveStates();
+
+	// Attractor
+
+	/**
+	 * Compute the i-attractor of the player (0-indexed).
+	 * @param target Target states
+	 * @param parent a PrismComponent (for obtaining the log)
+	 */
+	public RegionStrategy attractor(int player, BitSet target, prism.PrismComponent parent);
+
+	/**
+	 * Compute the subgame with the given states.
+	 * @param states states
+	 */
+	public TG subgame(BitSet states);
+
+	/**
+	 * Compute the subgame without the given states.
+	 * @param states states
+	 */
+	public TG difference(BitSet states);
+
 	/**
 	 * Get an iterator over the transitions from choice {@code i} of state {@code s}.
 	 */
 	public Iterator<Entry<Integer, Double>> getTransitionsIterator(int s, int i);
+
 }
