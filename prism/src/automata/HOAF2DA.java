@@ -55,6 +55,7 @@ import acceptance.AcceptanceGenRabin;
 import acceptance.AcceptanceGenRabin.GenRabinPair;
 import acceptance.AcceptanceGeneric;
 import acceptance.AcceptanceOmega;
+import acceptance.AcceptanceParity;
 import acceptance.AcceptanceRabin;
 import acceptance.AcceptanceRabin.RabinPair;
 import acceptance.AcceptanceStreett;
@@ -315,6 +316,8 @@ public class HOAF2DA implements HOAConsumer {
 				return prepareAcceptanceStreett();
 			} else if (accName.equals("Buchi")) {
 				return prepareAcceptanceBuchi();
+			} else if (accName.equals("parity")) {
+				return prepareAcceptanceParity();
 			}
 		}
 
@@ -371,6 +374,33 @@ public class HOAF2DA implements HOAConsumer {
 		}
 
 		throw new UnsupportedOperationException("Unknown operator in acceptance condition: "+expr);
+	}
+	
+	/**
+	 * Prepare a parity acceptance condition from the acc-name header.
+	 */
+	private AcceptanceParity prepareAcceptanceParity() throws HOAConsumerException
+	{
+		if (extraInfo.size() != 3 ||
+			    !(extraInfo.get(0) instanceof String) ||
+			    !(extraInfo.get(1) instanceof String) ||
+			    !(extraInfo.get(2) instanceof Integer)) {
+			throw new HOAConsumerException("Invalid acc-name: parity header");
+		}
+
+		String objective = (String) extraInfo.get(0);
+		String parity = (String) extraInfo.get(1);
+		int numPriorities = (Integer) extraInfo.get(2);
+		
+		AcceptanceParity acceptanceParity = new AcceptanceParity(
+				AcceptanceParity.Objective.fromString(objective), AcceptanceParity.Parity.fromString(parity), numPriorities);
+		
+		acceptanceSets = new ArrayList<BitSet>(numPriorities);
+		for (int i = 0; i< numPriorities; i++) {
+			acceptanceSets.add(acceptanceParity.getAcceptanceSet(i));
+		}
+		
+		return acceptanceParity;
 	}
 
 	/**

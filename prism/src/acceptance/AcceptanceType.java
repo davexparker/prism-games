@@ -31,6 +31,8 @@ package acceptance;
  * An omega-regular acceptance type.
  */
 public enum AcceptanceType {
+	/** Parity acceptance */
+	PARITY("parity", "P"),
 	/** Büchi acceptance */
 	BUCHI("Buchi", "B"),
 	/** Rabin acceptance */
