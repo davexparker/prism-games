@@ -227,8 +227,8 @@ public class GamesModelChecker extends NonProbModelChecker {
 		coalitions.add(new ArrayList<Integer>());
 		coalitions.add(new ArrayList<Integer>());
 						
-		System.out.println("isMax: " + minMax.isMax());
-		System.out.println("isMin: " + minMax.isMin());
+//		System.out.println("isMax: " + minMax.isMax());
+//		System.out.println("isMin: " + minMax.isMin());
 		
 		if(expr.getRelOp().toString().equals("max=") || expr.getRelOp().toString().equals(">=") ) { //has to be changed
 			//System.out.println("Pmax");
@@ -338,8 +338,8 @@ public class GamesModelChecker extends NonProbModelChecker {
 		coalitions.add(new ArrayList<Integer>());
 		coalitions.add(new ArrayList<Integer>());
 				
-		System.out.println("isMax: " + minMax.isMax());
-		System.out.println("isMin: " + minMax.isMin());
+//		System.out.println("isMax: " + minMax.isMax());
+//		System.out.println("isMin: " + minMax.isMin());
 		
 		if(expr.getRelOp().toString().equals("max=") || expr.getRelOp().toString().equals(">=")) { //has to be changed
 			for(Integer i : playersNames.keySet()) {
