@@ -43,6 +43,8 @@ import parser.VarList;
 import parser.ast.Declaration;
 import parser.ast.DeclarationIntUnbounded;
 import parser.ast.Expression;
+import prism.Accuracy;
+import prism.AccuracyFactory;
 import prism.OptionsIntervalIteration;
 import prism.Prism;
 import prism.PrismComponent;
@@ -53,6 +55,7 @@ import prism.PrismLog;
 import prism.PrismNotSupportedException;
 import prism.PrismSettings;
 import prism.PrismUtils;
+import prism.Accuracy.AccuracyLevel;
 import strat.MDStrategyArray;
 import strat.MemorylessDeterministicStrategy;
 import strat.StepBoundedDeterministicStrategy;
@@ -141,7 +144,7 @@ public class MDPModelChecker extends ProbModelChecker
 		mcProduct = new MDPModelChecker(this);
 		mcProduct.inheritSettings(this);
 		ModelCheckerResult res = mcProduct.computeReachProbs((MDP) product.getProductModel(), acc, false);
-		probsProduct = StateValues.createFromDoubleArray(res.soln, product.getProductModel());
+		probsProduct = StateValues.createFromDoubleArrayResult(res, product.getProductModel());
 
 		// Subtract from 1 if we're model checking a negated formula for regular Pmin
 		if (minMax.isMin()) {
@@ -217,7 +220,7 @@ public class MDPModelChecker extends ProbModelChecker
 		mcProduct = new MDPModelChecker(this);
 		mcProduct.inheritSettings(this);
 		ModelCheckerResult res = mcProduct.computeReachRewards((MDP)product.getProductModel(), productRewards, acc, minMax.isMin());
-		rewardsProduct = StateValues.createFromDoubleArray(res.soln, product.getProductModel());
+		rewardsProduct = StateValues.createFromDoubleArrayResult(res, product.getProductModel());
 
 		// Output vector over product, if required
 		if (getExportProductVector()) {
@@ -264,6 +267,7 @@ public class MDPModelChecker extends ProbModelChecker
 
 		// Return results
 		res = new ModelCheckerResult();
+		res.accuracy = AccuracyFactory.boundedNumericalIterations();
 		res.soln = soln2;
 		res.numIters = 1;
 		res.timeTaken = timer / 1000.0;
@@ -394,7 +398,8 @@ public class MDPModelChecker extends ProbModelChecker
 
 		// Start probabilistic reachability
 		timer = System.currentTimeMillis();
-		mainLog.println("\nStarting probabilistic reachability (" + (min ? "min" : "max") + ")...");
+		if(verbosity >=1)
+			mainLog.println("\nStarting probabilistic reachability (" + (min ? "min" : "max") + ")...");
 
 		// Check for deadlocks in non-target state (because breaks e.g. prob1)
 		mdp.checkForDeadlocks(target);
@@ -454,7 +459,8 @@ public class MDPModelChecker extends ProbModelChecker
 		// Print results of precomputation
 		numYes = yes.cardinality();
 		numNo = no.cardinality();
-		mainLog.println("target=" + target.cardinality() + ", yes=" + numYes + ", no=" + numNo + ", maybe=" + (n - (numYes + numNo)));
+		if(verbosity >=1)
+			mainLog.println("target=" + target.cardinality() + ", yes=" + numYes + ", no=" + numNo + ", maybe=" + (n - (numYes + numNo)));
 
 		// If still required, store strategy for no/yes (0/1) states.
 		// This is just for the cases max=0 and min=1, where arbitrary choices suffice (denoted by -2)
@@ -512,17 +518,20 @@ public class MDPModelChecker extends ProbModelChecker
 						res.soln[i] = res1.soln[maxQuotient.mapStateToRestrictedModel(i)];
 					}
 				}
+				res.accuracy = res1.accuracy;
 			} else {
 				res = computeReachProbsNumeric(mdp, mdpSolnMethod, no, yes, min, init, known, strat);
 			}
 		} else {
 			res = new ModelCheckerResult();
 			res.soln = Utils.bitsetToDoubleArray(yes, n);
+			res.accuracy = AccuracyFactory.doublesFromQualitative();
 		}
 
 		// Finished probabilistic reachability
 		timer = System.currentTimeMillis() - timer;
-		mainLog.println("Probabilistic reachability took " + timer / 1000.0 + " seconds.");
+		if(verbosity >=1)
+			mainLog.println("Probabilistic reachability took " + timer / 1000.0 + " seconds.");
 
 		// Store strategy
 		if (genStrat) {
@@ -533,8 +542,10 @@ public class MDPModelChecker extends ProbModelChecker
 		}
 		// Export adversary
 		if (exportAdv) {
-			// Prune strategy
-			restrictStrategyToReachableStates(mdp, strat);
+			// Prune strategy, if needed
+			if (getRestrictStratToReach()) {
+				restrictStrategyToReachableStates(mdp, strat);
+			}
 			// Export
 			PrismLog out = new PrismFileLog(exportAdvFilename);
 			new DTMCFromMDPMemorylessAdversary(mdp, strat).exportToPrismExplicitTra(out);
@@ -842,6 +853,7 @@ public class MDPModelChecker extends ProbModelChecker
 		ExportIterations iterationsExport = null;
 		if (settings.getBoolean(PrismSettings.PRISM_EXPORT_ITERATIONS)) {
 			iterationsExport = new ExportIterations("Explicit MDP ReachProbs value iteration (" + description + ")");
+			mainLog.println("Exporting iterations to " + iterationsExport.getFileName());
 		}
 
 		// Store num states
@@ -931,6 +943,7 @@ public class MDPModelChecker extends ProbModelChecker
 		ExportIterations iterationsExport = null;
 		if (settings.getBoolean(PrismSettings.PRISM_EXPORT_ITERATIONS)) {
 			iterationsExport = new ExportIterations("Explicit MDP ReachProbs interval iteration (" + description + ")");
+			mainLog.println("Exporting iterations to " + iterationsExport.getFileName());
 		}
 
 		// Store num states
@@ -1294,7 +1307,8 @@ public class MDPModelChecker extends ProbModelChecker
 
 		// Start bounded probabilistic reachability
 		timer = System.currentTimeMillis();
-		mainLog.println("\nStarting bounded probabilistic reachability (" + (min ? "min" : "max") + ")...");
+		if(verbosity >= 1)
+			mainLog.println("\nStarting bounded probabilistic reachability (" + (min ? "min" : "max") + ")...");
 
 		// Store num states
 		n = mdp.getNumStates();
@@ -1373,9 +1387,10 @@ public class MDPModelChecker extends ProbModelChecker
 
 		// Finished bounded probabilistic reachability
 		timer = System.currentTimeMillis() - timer;
-		mainLog.print("Bounded probabilistic reachability (" + (min ? "min" : "max") + ")");
-		mainLog.println(" took " + iters + " iterations and " + timer / 1000.0 + " seconds.");
-
+		if(verbosity >= 1) {
+			mainLog.print("Bounded probabilistic reachability (" + (min ? "min" : "max") + ")");
+			mainLog.println(" took " + iters + " iterations and " + timer / 1000.0 + " seconds.");
+		}
 		// Creating strategy object
 		int[][] choices = null;
 		if (generateStrategy) {
@@ -1396,6 +1411,7 @@ public class MDPModelChecker extends ProbModelChecker
 		res = new ModelCheckerResult();
 		res.soln = soln;
 		res.lastSoln = soln2;
+		res.accuracy = AccuracyFactory.boundedNumericalIterations();
 		res.numIters = iters;
 		res.timeTaken = timer / 1000.0;
 		res.timePre = 0.0;
@@ -1454,6 +1470,7 @@ public class MDPModelChecker extends ProbModelChecker
 		// Return results
 		res = new ModelCheckerResult();
 		res.soln = soln;
+		res.accuracy = AccuracyFactory.boundedNumericalIterations();
 		res.numIters = iters;
 		res.timeTaken = timer / 1000.0;
 
@@ -1961,6 +1978,7 @@ public class MDPModelChecker extends ProbModelChecker
 		res = new ModelCheckerResult();
 		res.soln = soln;
 		res.lastSoln = soln2;
+		res.accuracy = AccuracyFactory.boundedNumericalIterations();
 		res.numIters = iters;
 		res.timeTaken = timer / 1000.0;
 		res.timePre = 0.0;
@@ -2145,7 +2163,7 @@ public class MDPModelChecker extends ProbModelChecker
 
 		// Start expected reachability
 		timer = System.currentTimeMillis();
-		mainLog.println("\nStarting expected reachability (" + (min ? "min" : "max") + ")...");
+		mainLog.println("Starting expected reachability (" + (min ? "min" : "max") + ")...");
 
 		// Check for deadlocks in non-target state (because breaks e.g. prob1)
 		mdp.checkForDeadlocks(target);
@@ -2219,38 +2237,46 @@ public class MDPModelChecker extends ProbModelChecker
 			}
 		}
 
-		ZeroRewardECQuotient quotient = null;
-		boolean doZeroMECCheckForMin = true;
-		if (min & doZeroMECCheckForMin) {
-			StopWatch zeroMECTimer = new StopWatch(mainLog);
-			zeroMECTimer.start("checking for zero-reward ECs");
-			mainLog.println("For Rmin, checking for zero-reward ECs...");
-			BitSet unknown = (BitSet) inf.clone();
-			unknown.flip(0, mdp.getNumStates());
-			unknown.andNot(target);
-			quotient = ZeroRewardECQuotient.getQuotient(this, mdp, unknown, mdpRewards);
-
-			if (quotient == null) {
-				zeroMECTimer.stop("no zero-reward ECs found, proceeding normally");
-			} else {
-				zeroMECTimer.stop("built quotient MDP with " + quotient.getNumberOfZeroRewardMECs() + " zero-reward MECs");
-				if (strat != null) {
-					throw new PrismException("Constructing a strategy for Rmin in the presence of zero-reward ECs is currently not supported");
+		// Compute rewards (if needed)
+		if (numTarget + numInf < n) {
+			
+			ZeroRewardECQuotient quotient = null;
+			boolean doZeroMECCheckForMin = true;
+			if (min & doZeroMECCheckForMin) {
+				StopWatch zeroMECTimer = new StopWatch(mainLog);
+				zeroMECTimer.start("checking for zero-reward ECs");
+				mainLog.println("For Rmin, checking for zero-reward ECs...");
+				BitSet unknown = (BitSet) inf.clone();
+				unknown.flip(0, mdp.getNumStates());
+				unknown.andNot(target);
+				quotient = ZeroRewardECQuotient.getQuotient(this, mdp, unknown, mdpRewards);
+	
+				if (quotient == null) {
+					zeroMECTimer.stop("no zero-reward ECs found, proceeding normally");
+				} else {
+					zeroMECTimer.stop("built quotient MDP with " + quotient.getNumberOfZeroRewardMECs() + " zero-reward MECs");
+					if (strat != null) {
+						throw new PrismException("Constructing a strategy for Rmin in the presence of zero-reward ECs is currently not supported");
+					}
 				}
 			}
-		}
-
-		if (quotient != null) {
-			BitSet newInfStates = (BitSet)inf.clone();
-			newInfStates.or(quotient.getNonRepresentativeStates());
-			int quotientModelStates = quotient.getModel().getNumStates() - newInfStates.cardinality();
-			mainLog.println("Computing Rmin in zero-reward EC quotient model (" + quotientModelStates + " relevant states)...");
-			res = computeReachRewardsNumeric(quotient.getModel(), quotient.getRewards(), mdpSolnMethod, target, newInfStates, min, init, known, strat);
-			quotient.mapResults(res.soln);
+	
+			if (quotient != null) {
+				BitSet newInfStates = (BitSet)inf.clone();
+				newInfStates.or(quotient.getNonRepresentativeStates());
+				int quotientModelStates = quotient.getModel().getNumStates() - newInfStates.cardinality();
+				mainLog.println("Computing Rmin in zero-reward EC quotient model (" + quotientModelStates + " relevant states)...");
+				res = computeReachRewardsNumeric(quotient.getModel(), quotient.getRewards(), mdpSolnMethod, target, newInfStates, min, init, known, strat);
+				quotient.mapResults(res.soln);
+			} else {
+				res = computeReachRewardsNumeric(mdp, mdpRewards, mdpSolnMethod, target, inf, min, init, known, strat);
+			}
 		} else {
-			res = computeReachRewardsNumeric(mdp, mdpRewards, mdpSolnMethod, target, inf, min, init, known, strat);
+			res = new ModelCheckerResult();
+			res.soln = Utils.bitsetToDoubleArray(inf, n, Double.POSITIVE_INFINITY);
+			res.accuracy = AccuracyFactory.doublesFromQualitative();
 		}
-
+		
 		// Store strategy
 		if (genStrat) {
 			res.strat = new MDStrategyArray(mdp, strat);
@@ -2260,8 +2286,10 @@ public class MDPModelChecker extends ProbModelChecker
 		}
 		// Export adversary
 		if (exportAdv) {
-			// Prune strategy
-			restrictStrategyToReachableStates(mdp, strat);
+			// Prune strategy, if needed
+			if (getRestrictStratToReach()) {
+				restrictStrategyToReachableStates(mdp, strat);
+			}
 			// Export
 			PrismLog out = new PrismFileLog(exportAdvFilename);
 			new DTMCFromMDPMemorylessAdversary(mdp, strat).exportToPrismExplicitTra(out);
@@ -2361,6 +2389,7 @@ public class MDPModelChecker extends ProbModelChecker
 		ExportIterations iterationsExport = null;
 		if (settings.getBoolean(PrismSettings.PRISM_EXPORT_ITERATIONS)) {
 			iterationsExport = new ExportIterations("Explicit MDP ReachRewards value iteration (" + description +")");
+			mainLog.println("Exporting iterations to " + iterationsExport.getFileName());
 		}
 
 		// Store num states
@@ -2506,6 +2535,7 @@ public class MDPModelChecker extends ProbModelChecker
 		ExportIterations iterationsExport = null;
 		if (settings.getBoolean(PrismSettings.PRISM_EXPORT_ITERATIONS)) {
 			iterationsExport = new ExportIterations("Explicit MDP ReachRewards interval iteration (" + description + ")");
+			mainLog.println("Exporting iterations to " + iterationsExport.getFileName());
 		}
 
 		// Create initial solution vector(s)

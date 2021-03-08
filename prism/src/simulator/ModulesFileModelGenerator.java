@@ -1,25 +1,26 @@
 package simulator;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
-import java.util.Vector;
 
 import parser.State;
 import parser.Values;
 import parser.VarList;
+import parser.ast.DeclarationType;
 import parser.ast.Expression;
 import parser.ast.LabelList;
 import parser.ast.ModulesFile;
-import parser.ast.Player;
 import parser.ast.RewardStruct;
 import parser.type.Type;
-import prism.DefaultModelGenerator;
+import prism.ModelGenerator;
 import prism.ModelType;
 import prism.PrismComponent;
 import prism.PrismException;
 import prism.PrismLangException;
+import prism.RewardGenerator;
 
-public class ModulesFileModelGenerator extends DefaultModelGenerator
+public class ModulesFileModelGenerator implements ModelGenerator, RewardGenerator
 {
 	// Parent PrismComponent (logs, settings etc.)
 	protected PrismComponent parent;
@@ -35,9 +36,6 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 	private LabelList labelList;
 	private List<String> labelNames;
 	
-	// Wwhether to use the "compositional" system construction (for SMGSs)
-	private boolean compositional = false;
-
 	// Model exploration info
 	
 	// State currently being explored
@@ -48,9 +46,10 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 	protected TransitionList transitionList;
 	// Has the transition list been built? 
 	protected boolean transitionListBuilt;
-	
+		
 	/**
 	 * Build a ModulesFileModelGenerator for a particular PRISM model, represented by a ModuleFile instance.
+	 * Throw an explanatory exception if this is not possible.
 	 * @param modulesFile The PRISM model
 	 */
 	public ModulesFileModelGenerator(ModulesFile modulesFile) throws PrismException
@@ -60,19 +59,20 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 	
 	/**
 	 * Build a ModulesFileModelGenerator for a particular PRISM model, represented by a ModuleFile instance.
+	 * Throw an explanatory exception if this is not possible.
 	 * @param modulesFile The PRISM model
 	 */
 	public ModulesFileModelGenerator(ModulesFile modulesFile, PrismComponent parent) throws PrismException
 	{
 		this.parent = parent;
 		
-		// No support for PTAs yet
-		if (modulesFile.getModelType() == ModelType.PTA) {
-			throw new PrismException("Sorry - the simulator does not currently support PTAs");
+		// No support for PTA (and similar) models yet
+		if (modulesFile.getModelType() == ModelType.PTA || modulesFile.getModelType() == ModelType.POPTA || modulesFile.getModelType() == ModelType.TPTG) {
+			throw new PrismException(modulesFile.getModelType() + "s are not currently supported");
 		}
 		// No support for system...endsystem yet
 		if (modulesFile.getSystemDefn() != null) {
-			throw new PrismException("Sorry - the simulator does not currently handle the system...endsystem construct");
+			throw new PrismException("The system...endsystem construct is not currently supported");
 		}
 		
 		// Store basic model info
@@ -92,7 +92,7 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 	 * (Re-)Initialise the class ready for model exploration
 	 * (can only be done once any constants needed have been provided)
 	 */
-	private void initialise() throws PrismLangException
+	private void initialise() throws PrismException
 	{
 		// Evaluate constants on (a copy) of the modules file, insert constant values and optimize arithmetic expressions
 		modulesFile = (ModulesFile) modulesFile.deepCopy().replaceConstants(mfConstants).simplify();
@@ -104,25 +104,10 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 		
 		// Create data structures for exploring model
 		updater = new Updater(modulesFile, varList, parent);
+		if(modelType == ModelType.CSG)
+			updater.initialiseCSG();
 		transitionList = new TransitionList();
 		transitionListBuilt = false;
-	}
-	
-	/**
-	 * Get access to the ModulesFile being used to generate the model.
-	 * @return
-	 */
-	public ModulesFile getModulesFile()
-	{
-		return modulesFile;
-	}
-	
-	/**
-	 * Set whether to use the "compositional" system construction (for SMGSs) 
-	 */
-	public void setCompositional(boolean compositional)
-	{
-		this.compositional = compositional;
 	}
 	
 	// Methods for ModelInfo interface
@@ -132,9 +117,15 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 	{
 		return modelType;
 	}
-	
+
 	@Override
 	public void setSomeUndefinedConstants(Values someValues) throws PrismException
+	{
+		setSomeUndefinedConstants(someValues, false);
+	}
+
+	@Override
+	public void setSomeUndefinedConstants(Values someValues, boolean exact) throws PrismException
 	{
 		// We start again with a copy of the original modules file
 		// and set the constants in the copy.
@@ -143,7 +134,7 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 		// start again at a place where references to constants have not
 		// yet been replaced.
 		modulesFile = (ModulesFile) originalModulesFile.deepCopy();
-		modulesFile.setSomeUndefinedConstants(someValues);
+		modulesFile.setSomeUndefinedConstants(someValues, exact);
 		mfConstants = modulesFile.getConstantValues();
 		initialise();
 	}
@@ -178,12 +169,53 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 		return modulesFile.getVarTypes();
 	}
 
+	public DeclarationType getVarDeclarationType(int i) throws PrismException
+	{
+		return modulesFile.getVarDeclarationType(i);
+	}
+	
+	@Override
+	public int getVarModuleIndex(int i)
+	{
+		return modulesFile.getVarModuleIndex(i);
+	}
+	
+	@Override
+	public String getModuleName(int i)
+	{
+		return modulesFile.getModuleName(i);
+	}
+	
+	@Override
+	public VarList createVarList() throws PrismException
+	{
+		return varList;
+	}
+	
+	@Override
+	public List<String> getObservableVars()
+	{
+		return modulesFile.getObservableVars();
+	}
+	
+	@Override
+	public List<Object> getActions()
+	{
+		return modulesFile.getActions();
+	}
+
 	@Override
 	public int getNumLabels()
 	{
 		return labelList.size();	
 	}
 
+	@Override
+	public String getActionStringDescription()
+	{
+		return "Module/[action]";
+	}
+	
 	@Override
 	public List<String> getLabelNames()
 	{
@@ -203,47 +235,11 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 	}
 	
 	@Override
-	public int getNumRewardStructs()
+	public List<String> getPlayerNames()
 	{
-		return modulesFile.getNumRewardStructs();
-	}
-	
-	@Override
-	public List<String> getRewardStructNames()
-	{
-		return modulesFile.getRewardStructNames();
-	}
-	
-	@Override
-	public int getRewardStructIndex(String name)
-	{
-		return modulesFile.getRewardStructIndex(name);
-	}
-	
-	@Override
-	public RewardStruct getRewardStruct(int i)
-	{
-		return modulesFile.getRewardStruct(i);
+		return modulesFile.getPlayerNames();
 	}
 
-	@Override
-	public int getNumPlayers()
-	{
-		return modulesFile.getNumPlayers();
-	}
-
-	@Override
-	public Player getPlayer(int i)
-	{
-		return modulesFile.getPlayer(i);
-	}
-	
-	@Override
-	public VarList createVarList()
-	{
-		return varList;
-	}
-	
 	// Methods for ModelGenerator interface
 	
 	@Override
@@ -294,10 +290,55 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 	}
 	
 	@Override
-	public State getExploreState()
-	{
-		return exploreState;
-	}
+    public int getPlayerOwningState() throws PrismException
+    {
+		// Turn-based games only
+		if (modelType.concurrent()) {
+			return -1;
+		}
+		// Determine which player owns the state
+		int player = -1;
+		TransitionList transitions = getTransitionList();
+		int nc = getNumChoices();
+		for (int i = 0; i < nc; i++) {
+			String modAct = transitions.getChoiceModuleOrAction(i);
+			int iPlayer = modulesFile.getPlayerForModuleOrAction(modAct);
+			if (player != -1 && iPlayer != -1 && iPlayer != player) {
+				throw new PrismException("Choices for both player " + (player + 1) + " and " + (iPlayer + 1) + " in state " + exploreState);
+			}
+			if (iPlayer != -1) {
+				player = iPlayer;
+			}
+		}
+		// Assign deadlock states to player 1
+		if (nc == 0) {
+			player = 0;
+		}
+		// No assigned player: only allowed when the state is deterministic (one choice)
+		// (in which case, assign the state to player 1)
+		if (player == -1) {
+			if (nc == 1) {
+				player = 0;
+			}
+			// Otherwise, it's an error
+			else {
+				List<String> acts = new ArrayList<>();
+				for (int i = 0; i < nc; i++) {
+					String modAct = transitions.getChoiceModuleOrAction(i);
+					if (modulesFile.getPlayerForModuleOrAction(modAct) == -1) {
+						acts.add(getChoiceActionString(i));
+					}
+				}
+				String errMsg = "There are multiple choices (" + String.join(",", acts) +  ") in state " + exploreState + " not assigned to any player"; 
+				throw new PrismException(errMsg);
+			}
+		}
+		// Make sure a valid player owns the state
+		if (player < 0 || player >= getNumPlayers()) {
+			throw new PrismException("State " + exploreState + " owned by invalid player (" + (player + 1) + ")");
+		}
+		return player;
+    }
 	
 	@Override
 	public int getNumChoices() throws PrismException
@@ -312,113 +353,191 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 	}
 
 	@Override
-	public int getNumTransitions(int index) throws PrismException
+	public int getNumTransitions(int i) throws PrismException
 	{
-		return getTransitionList().getChoice(index).size();
+		return getTransitionList().getChoice(i).size();
 	}
 
 	@Override
-	public String getTransitionAction(int index) throws PrismException
+	public int getChoiceIndexOfTransition(int index) throws PrismException
 	{
-		int a = getTransitionList().getTransitionModuleOrActionIndex(index);
-		return a < 0 ? null : modulesFile.getSynch(a - 1);
-	}
-
-	@Override
-	public String getTransitionAction(int index, int offset) throws PrismException
-	{
-		TransitionList transitions = getTransitionList();
-		int a = transitions.getTransitionModuleOrActionIndex(transitions.getTotalIndexOfTransition(index, offset));
-		return a < 0 ? null : modulesFile.getSynch(a - 1);
-	}
-
-	@Override
-	public String getChoiceAction(int index) throws PrismException
-	{
-		TransitionList transitions = getTransitionList();
-		int a = transitions.getChoiceModuleOrActionIndex(index);
-		return a < 0 ? null : modulesFile.getSynch(a - 1);
-	}
-
-	public int getTransitionModuleOrActionIndex(int i, int offset) throws PrismException
-	{
-		TransitionList transitions = getTransitionList();
-		return transitions.getTransitionModuleOrActionIndex(transitions.getTotalIndexOfTransition(i, offset));
-	}
-	
-	public String getTransitionModuleOrAction(int i, int offset) throws PrismException
-	{
-		TransitionList transitions = getTransitionList();
-		return transitions.getTransitionModuleOrAction(transitions.getTotalIndexOfTransition(i, offset));
+		return getTransitionList().getChoiceIndexOfTransition(index);
 	}
 	
 	@Override
-	public double getTransitionProbability(int index, int offset) throws PrismException
+	public int getChoiceOffsetOfTransition(int index) throws PrismException
+	{
+		return getTransitionList().getChoiceOffsetOfTransition(index);
+	}
+	
+	@Override
+	public int getTotalIndexOfTransition(int i, int offset) throws PrismException
+	{
+		return getTransitionList().getTotalIndexOfTransition(i, offset);
+	}
+	
+	@Override
+	public Object getTransitionAction(int i, int offset) throws PrismException
 	{
 		TransitionList transitions = getTransitionList();
-		return transitions.getChoice(index).getProbability(offset);
+		int index = transitions.getTotalIndexOfTransition(i, offset);
+		if (!modelType.concurrent()) {
+			int a = transitions.getTransitionModuleOrActionIndex(index);
+			return a < 0 ? null : getActions().get(a - 1);
+		} else {
+			int as[] = ((ChoiceListFlexi) transitions.getChoice(index)).getActions();
+			return as;
+		}
 	}
 
-	//@Override
-	public double getTransitionProbability(int index) throws PrismException
+	@Override
+	public int getTransitionActionIndex(int i, int offset) throws PrismException
 	{
 		TransitionList transitions = getTransitionList();
-		return transitions.getTransitionProbability(index);
+		if (!modelType.concurrent()) {
+			int a = transitions.getTransitionModuleOrActionIndex(transitions.getTotalIndexOfTransition(i, offset));
+			return a < 0 ? -1 : a - 1;
+		} else {
+			throw new PrismException("Action index info not available"); 
+		}
 	}
 
+	@Override
+	public String getTransitionActionString(int i, int offset) throws PrismException
+	{
+		TransitionList transitions = getTransitionList();
+		int index = transitions.getTotalIndexOfTransition(i, offset);
+		if (!modelType.concurrent()) {
+			int a = transitions.getTransitionModuleOrActionIndex(index);
+			return getDescriptionForModuleOrActionIndex(a);
+		} else {
+			int as[] = ((ChoiceListFlexi) transitions.getChoice(i)).getActions();
+			return getDescriptionForActionIndexList(as);
+		}
+	}
+	
+	@Override
+	public Object getChoiceAction(int index) throws PrismException
+	{
+		TransitionList transitions = getTransitionList();
+		if (!modelType.concurrent()) {
+			int a = transitions.getChoiceModuleOrActionIndex(index);
+			return a < 0 ? null : getActions().get(a - 1);
+		} else {
+			int as[] = ((ChoiceListFlexi) transitions.getChoice(index)).getActions();
+			return as;
+		}
+	}
+
+	@Override
+	public int getChoiceActionIndex(int index) throws PrismException
+	{
+		TransitionList transitions = getTransitionList();
+		if (!modelType.concurrent()) {
+			int a = transitions.getChoiceModuleOrActionIndex(index);
+			return a < 0 ? -1 : a - 1;
+		} else {
+			throw new PrismException("Action index info not available"); 
+		}
+	}
+
+	@Override
+	public String getChoiceActionString(int index) throws PrismException
+	{
+		TransitionList transitions = getTransitionList();
+		if (!modelType.concurrent()) {
+			int a = transitions.getChoiceModuleOrActionIndex(index);
+			return getDescriptionForModuleOrActionIndex(a);
+		} else {
+			int as[] = ((ChoiceListFlexi) transitions.getChoice(index)).getActions();
+			return getDescriptionForActionIndexList(as);
+		}
+	}
+
+	@Override
+	public int[] getTransitionIndexes(int i) 
+	{
+		return transitionList.getTransitionActionIndexes(i);
+	}
+	
+	/**
+	 * Utility method to get a description for an action label:
+	 * "[a]" for a synchronous action a and "M" for an unlabelled
+	 * action belonging to a module M. Takes in an integer index:
+	 * -i for independent in ith module, i for synchronous on ith action
+	 * (in both cases, modules/actions are 1-indexed) 
+	 */ 
+	private String getDescriptionForModuleOrActionIndex(int a)
+	{
+		if (a < 0) {
+			return modulesFile.getModuleName(-a - 1);
+		} else if (a > 0) {
+			return "[" + modulesFile.getSynchs().get(a - 1) + "]";
+		} else {
+			return "?";
+		}
+	}
+	
+	/**
+	 * Utility method to get a description for list of (concurrent) actions,
+	 * given as an array of (1-indexed) indices into the list of all actions.
+	 * An index of -1 indicates that a player idles.
+	 * The format is "[a1,b2,-,c3]" with "-" denoting idle.
+	 */
+	private String getDescriptionForActionIndexList(int as[])
+	{
+		String s = "[";
+		int n = as.length;
+		if (n > 0) {
+			s += as[0] == -1 ? "-" : getActions().get(as[0] - 1);
+		}
+		for (int i = 1; i < n; i++) {
+			s += ",";
+			s += as[i] == -1 ? "-" : getActions().get(as[i] - 1);
+		}
+		s += "]";
+		return s;
+	}
+	
+	@Override
+	public double getTransitionProbability(int i, int offset) throws PrismException
+	{
+		TransitionList transitions = getTransitionList();
+		return transitions.getChoice(i).getProbability(offset);
+	}
+
+	@Override
+	public double getChoiceProbabilitySum(int i) throws PrismException
+	{
+		TransitionList transitions = getTransitionList();
+		return transitions.getChoice(i).getProbabilitySum();
+	}
+	
+	@Override
+	public double getProbabilitySum() throws PrismException
+	{
+		TransitionList transitions = getTransitionList();
+		return transitions.getProbabilitySum();
+	}
+	
+	@Override
+	public String getTransitionUpdateString(int i, int offset) throws PrismException
+	{
+		TransitionList transitions = getTransitionList();
+		return transitions.getTransitionUpdateString(transitions.getTotalIndexOfTransition(i, offset), exploreState);
+	}
+	
+	@Override
+	public String getTransitionUpdateStringFull(int i, int offset) throws PrismException
+	{
+		TransitionList transitions = getTransitionList();
+		return transitions.getTransitionUpdateStringFull(transitions.getTotalIndexOfTransition(i, offset));
+	}
+	
 	@Override
 	public State computeTransitionTarget(int index, int offset) throws PrismException
 	{
 		return getTransitionList().getChoice(index).computeTarget(offset, exploreState);
-	}
-
-	//@Override
-	public State computeTransitionTarget(int index) throws PrismException
-	{
-		return getTransitionList().computeTransitionTarget(index, exploreState);
-	}
-	
-	@Override
-    public int getPlayerNumberForChoice(int i) throws PrismException
-	{
-    		// Normal game
-		if (!compositional) {
-			String modAct = getTransitionModuleOrAction(i, 0);
-			// NB: 0-indexed to 1-indexed
-			return modulesFile.getPlayerForModuleOrAction(modAct) + 1;
-		}
-		// Compositional game
-		else {
-			// Get index of module/action (all transitions within choice have same action, so use offset 0)
-			int modAct = getTransitionModuleOrActionIndex(i, 0);
-
-			// Synchronous action
-			int player = -1;
-			if (modAct > 0) {
-				String actionName = modulesFile.getSynch(modAct - 1);
-				// get inputs and outputs of subsystem
-				Vector<String> inputs = new Vector<String>();
-				Vector<String> outputs = new Vector<String>();
-				for (int n = 0; n < modulesFile.getNumModules(); n++) {
-					inputs.addAll(modulesFile.getModule(n).getAllInputActions());
-					outputs.addAll(modulesFile.getModule(n).getAllOutputActions());
-				}
-				if (actionName == null || "".equals(actionName)) {
-					player = 2; // tau controlled by player 2
-				} else if (inputs.contains(actionName)) {
-					player = 2; // inputs controlled by player 2
-				} else if (outputs.contains(actionName)) {
-					player = 1; // outputs controlled by player 1
-				} else {
-					throw new PrismException("Action \"" + actionName + "\" is not assigned to any player");
-				}
-			}
-			// Asynchronous action
-			else {
-				player = 2; // tau controlled by player 2
-			}
-			return player;
-		}
 	}
 
 	@Override
@@ -426,6 +545,26 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 	{
 		Expression expr = labelList.getLabel(i);
 		return expr.evaluateBoolean(exploreState);
+	}
+	
+	// Methods for RewardGenerator interface
+
+	@Override
+	public List<String> getRewardStructNames()
+	{
+		return modulesFile.getRewardStructNames();
+	}
+	
+	@Override
+	public boolean rewardStructHasStateRewards(int i)
+	{
+		return modulesFile.rewardStructHasStateRewards(i);
+	}
+	
+	@Override
+	public boolean rewardStructHasTransitionRewards(int i)
+	{
+		return modulesFile.rewardStructHasTransitionRewards(i);
 	}
 	
 	@Override
@@ -439,8 +578,16 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 				Expression guard = rewStr.getStates(i);
 				if (guard.evaluateBoolean(modulesFile.getConstantValues(), state)) {
 					double rew = rewStr.getReward(i).evaluateDouble(modulesFile.getConstantValues(), state);
-					if (Double.isNaN(rew))
-						throw new PrismLangException("Reward structure evaluates to NaN at state " + state, rewStr.getReward(i));
+					// Check reward is finite/non-negative (would be checked at model construction time,
+					// but more fine grained error reporting can be done here)
+					// Note use of original model since modulesFile may have been simplified
+					if (!Double.isFinite(rew)) {
+						throw new PrismLangException("Reward structure is not finite at state " + state, originalModulesFile.getRewardStruct(r).getReward(i));
+					}
+					// NB: for now, disable negative reward check for CSGs 
+					if (modelType != ModelType.CSG && rew < 0) {
+						throw new PrismLangException("Reward structure is negative + (" + rew + ") at state " + state, originalModulesFile.getRewardStruct(r).getReward(i));
+					}
 					d += rew;
 				}
 			}
@@ -451,26 +598,77 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 	@Override
 	public double getStateActionReward(int r, State state, Object action) throws PrismException
 	{
+		double d = 0;
 		RewardStruct rewStr = modulesFile.getRewardStruct(r);
 		int n = rewStr.getNumItems();
-		double d = 0;
-		for (int i = 0; i < n; i++) {
-			if (rewStr.getRewardStructItem(i).isTransitionReward()) {
-				Expression guard = rewStr.getStates(i);
-				String cmdAction = rewStr.getSynch(i);
-				if (action == null ? (cmdAction.isEmpty()) : action.equals(cmdAction)) {
-					if (guard.evaluateBoolean(modulesFile.getConstantValues(), state)) {
-						double rew = rewStr.getReward(i).evaluateDouble(modulesFile.getConstantValues(), state);
-						if (Double.isNaN(rew))
-							throw new PrismLangException("Reward structure evaluates to NaN at state " + state, rewStr.getReward(i));
-						d += rew;
+		Expression guard;
+
+		if (modelType != ModelType.CSG) {
+			String cmdAction;
+			for (int i = 0; i < n; i++) {
+				if (rewStr.getRewardStructItem(i).isTransitionReward()) {
+					guard = rewStr.getStates(i);
+					cmdAction = rewStr.getSynch(i);
+					if (action == null ? (cmdAction.isEmpty()) : action.equals(cmdAction)) {
+						if (guard.evaluateBoolean(modulesFile.getConstantValues(), state)) {
+							double rew = rewStr.getReward(i).evaluateDouble(modulesFile.getConstantValues(), state);
+							// Check reward is finite/non-negative (would be checked at model construction time,
+							// but more fine grained error reporting can be done here)
+							// Note use of original model since modulesFile may have been simplified
+							if (!Double.isFinite(rew)) {
+								throw new PrismLangException("Reward structure is not finite at state " + state, originalModulesFile.getRewardStruct(r).getReward(i));
+							}
+							if (rew < 0) {
+								throw new PrismLangException("Reward structure is negative + (" + rew + ") at state " + state, originalModulesFile.getRewardStruct(r).getReward(i));
+							}
+							d += rew;
+						}
 					}
 				}
 			}
 		}
+		else {
+			BitSet active = new BitSet();
+			BitSet indexes = new BitSet();
+			BitSet tmp;
+			int[] actions = (int[]) action;
+			for (int i = 0; i < actions.length; i++) {
+				if (actions[i] != -1)
+					active.set(actions[i]);
+			}
+			for (int i = 0; i < n; i++) {
+				if (rewStr.getRewardStructItem(i).isTransitionReward()) {
+					guard = rewStr.getStates(i);
+					indexes.clear();
+					for (int j : rewStr.getRewardStructItem(i).getSynchIndices()) {
+						if (j != 0)
+							indexes.set(j);
+					}
+					tmp = (BitSet) indexes.clone();
+					tmp.andNot(active);
+					if (indexes.isEmpty() || (!indexes.isEmpty() && tmp.isEmpty())) {
+						if (guard.evaluateBoolean(modulesFile.getConstantValues(), state)) {
+							double rew = rewStr.getReward(i).evaluateDouble(modulesFile.getConstantValues(), state);
+							// Check reward is finite/non-negative (would be checked at model construction time,
+							// but more fine grained error reporting can be done here)
+							// Note use of original model since modulesFile may have been simplified
+							if (!Double.isFinite(rew)) {
+								throw new PrismLangException("Reward structure is not finite at state " + state, originalModulesFile.getRewardStruct(r).getReward(i));
+							}
+							// NB: for now, disable negative reward check for CSGs 
+//							if (rew < 0) {
+//								throw new PrismLangException("Reward structure is negative + (" + rew + ") at state " + state, originalModulesFile.getRewardStruct(r).getReward(i));
+//							}
+							d += rew;
+						}
+					}
+				}
+			}
+		}
+
 		return d;
 	}
-	
+
 	// Local utility methods
 	
 	/**
@@ -480,15 +678,15 @@ public class ModulesFileModelGenerator extends DefaultModelGenerator
 	{
 		// Compute the current transition list, if required
 		if (!transitionListBuilt) {
-			updater.calculateTransitions(exploreState, transitionList);
+			if(modelType == ModelType.CSG) {
+				updater.calculateTransitionsCSG(exploreState, transitionList);
+			}
+			else {
+ 				updater.calculateTransitions(exploreState, transitionList);
+			}				
 			transitionListBuilt = true;
 		}
-		return transitionList;
-	}
 
-	@Override
-	public boolean rewardStructHasTransitionRewards(int i)
-	{
-		return modulesFile.rewardStructHasTransitionRewards(i);
+		return transitionList;
 	}
 }

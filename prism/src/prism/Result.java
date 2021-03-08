@@ -40,6 +40,8 @@ public class Result
 {
 	// The result of model checking
 	private Object result;
+	// Accuracy of the result
+	private Accuracy accuracy;
 	// Explanatory text for result (optional)
 	private String explanation;
 	// Counterexample (optional)
@@ -70,6 +72,14 @@ public class Result
 	{
 		this();
 		setResult(result);
+	}
+	
+	/**
+	 * Set the accuracy.
+	 */
+	public void setAccuracy(Accuracy accuracy)
+	{
+		this.accuracy = accuracy;
 	}
 	
 	/**
@@ -117,6 +127,10 @@ public class Result
 	 */
 	public void setVector(StateVector vect)
 	{
+		// If we have a vector that was previously stored, clear it.
+		if (this.vect != null) {
+			this.vect.clear();
+		}
 		this.vect = vect;
 	}
 	
@@ -126,6 +140,14 @@ public class Result
 	public Object getResult()
 	{
 		return result;
+	}
+
+	/**
+	 * Get the accuracy.
+	 */
+	public Accuracy getAccuracy()
+	{
+		return accuracy;
 	}
 
 	/**
@@ -183,6 +205,21 @@ public class Result
 		if (explanation != null)
 			s += " (" + explanation +")";
 		return s;
+	}
+	
+	/**
+	 * Get a string of the result and its accuracy
+	 */
+	public String getResultAndAccuracy()
+	{
+		if (accuracy != null) {
+			String accuracyString = accuracy.toString(result);
+			if (accuracyString != null && !"".equals(accuracyString)) {
+				return result.toString() + " (" + accuracy.toString(result) + ")";
+			}
+		}
+		// If accuracy is missing or blank, omit it
+		return result.toString();
 	}
 	
 	/**

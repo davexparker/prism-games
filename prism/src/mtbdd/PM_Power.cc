@@ -100,7 +100,8 @@ jboolean transpose	// transpose A? (i.e. solve xA=b not Ax=b?)
 	std::unique_ptr<ExportIterations> iterationExport;
 	if (PM_GetFlagExportIterations()) {
 		iterationExport.reset(new ExportIterations("PM_Power"));
-		iterationExport->exportVector(sol, rvars, num_rvars, odd, 0);
+		PM_PrintToMainLog(env, "Exporting iterations to %s\n", iterationExport->getFileName().c_str());
+		iterationExport->exportVector(sol, (transpose?cvars:rvars), num_rvars, odd, 0);
 	}
 
 	// get setup time
@@ -127,7 +128,7 @@ jboolean transpose	// transpose A? (i.e. solve xA=b not Ax=b?)
 		tmp = DD_Apply(ddman, APPLY_PLUS, tmp, b);
 		
 		if (iterationExport)
-			iterationExport->exportVector(tmp, rvars, num_rvars, odd, 0);
+			iterationExport->exportVector(tmp, (transpose?cvars:rvars), num_rvars, odd, 0);
 
 		// check convergence
 		switch (term_crit) {
@@ -148,6 +149,25 @@ jboolean transpose	// transpose A? (i.e. solve xA=b not Ax=b?)
 			PM_PrintToMainLog(env, "Iteration %d: ", iters);
 			PM_PrintToMainLog(env, "%.2f sec so far\n", ((double)(util_cpu_time() - start2)/1000));
 			start3 = util_cpu_time();
+		}
+		
+		// store accuracy info, once converged
+		// the difference between vector values is not a reliable error bound
+		// but we store it anyway in case it is useful for estimating a bound
+		// TODO: handle cases where result is zero
+		if (done) {
+			Cudd_Ref(tmp);
+			Cudd_Ref(sol);
+			DdNode* difference = DD_Apply(ddman, APPLY_MINUS, tmp, sol);
+			if (term_crit == TERM_CRIT_RELATIVE) {
+				Cudd_Ref(tmp);
+				difference = DD_Apply(ddman, APPLY_DIVIDE, difference, tmp);
+			}
+			// No DD absolute operator so check most +ve/-ve
+			double max_diff = fabs(DD_FindMax(ddman, difference));
+			double min_diff = fabs(DD_FindMin(ddman, difference));
+			last_error_bound = max_diff > min_diff ? max_diff : min_diff;
+			Cudd_RecursiveDeref(ddman, difference);
 		}
 		
 		// prepare for next iteration

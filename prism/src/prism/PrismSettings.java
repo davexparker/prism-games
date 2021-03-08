@@ -72,6 +72,7 @@ public class PrismSettings implements Observer
 	
 	//PRISM
 	public static final	String PRISM_ENGINE							= "prism.engine";
+	public static final	String PRISM_HEURISTIC						= "prism.heuristic";
 	public static final	String PRISM_VERBOSE						= "prism.verbose";
 	public static final	String PRISM_FAIRNESS						= "prism.fairness";
 	public static final	String PRISM_PRECOMPUTATION					= "prism.precomputation";
@@ -94,6 +95,7 @@ public class PrismSettings implements Observer
 	public static final	String PRISM_TERM_CRIT_PARAM				= "prism.termCritParam";//"prism.terminationEpsilon";
 	public static final	String PRISM_MAX_ITERS						= "prism.maxIters";//"prism.maxIterations";
 	public static final String PRISM_EXPORT_ITERATIONS				= "prism.exportIterations";
+	public static final	String PRISM_GRID_RESOLUTION				= "prism.gridResolution";
 	
 	public static final	String PRISM_CUDD_MAX_MEM					= "prism.cuddMaxMem";
 	public static final	String PRISM_CUDD_EPSILON					= "prism.cuddEpsilon";
@@ -111,6 +113,7 @@ public class PrismSettings implements Observer
 	public static final	String PRISM_EXACT_ENABLED					= "prism.exact.enabled";
 	public static final String PRISM_PTA_METHOD					= "prism.ptaMethod";
 	public static final String PRISM_TRANSIENT_METHOD				= "prism.transientMethod";
+	public static final String PRISM_SMT_SOLVER					= "prism.smtsolver";
 	public static final String PRISM_AR_OPTIONS					= "prism.arOptions";
 	public static final String PRISM_PATH_VIA_AUTOMATA				= "prism.pathViaAutomata";
 	public static final String PRISM_NO_DA_SIMPLIFY				= "prism.noDaSimplify";
@@ -123,8 +126,10 @@ public class PrismSettings implements Observer
 	public static final	String PRISM_PARETO_EPSILON					= "prism.paretoEpsilon";
 	public static final	String PRISM_EXPORT_PARETO_FILENAME			= "prism.exportParetoFileName";
 
+	// csg and equilibria
+	public static final String PRISM_ZS_LP_SCALE_FACTOR			= "prism.lpscalefactor";
+
     // multi-objective synthesis for games
-	public static final     String PRISM_MULTI_COMP					= "prism.multiComp";
 	public static final     String PRISM_MULTI_GAUSS_SEIDEL					= "prism.multiGaussSeidel";
         // iteration control
         public static final	String PRISM_MULTI_MAX_C_ITER			= "prism.multiMaxCIter";
@@ -256,6 +261,8 @@ public class PrismSettings implements Observer
 			// ENGINES/METHODS:
 			{ CHOICE_TYPE,		PRISM_ENGINE,							"Engine",								"2.1",			"Hybrid",																	"MTBDD,Sparse,Hybrid,Explicit",																		
 																			"Which engine (hybrid, sparse, MTBDD, explicit) should be used for model checking." },
+			{ CHOICE_TYPE,		PRISM_HEURISTIC,						"Heuristic mode",							"4.5",			"None",																		"None,Speed,Memory",																		
+																			"Which heuristic mode to use for picking engines/settings (none, speed, memory)." },
 			{ BOOLEAN_TYPE,		PRISM_EXACT_ENABLED,					"Do exact model checking",			"4.2.1",			new Boolean(false),															"",
 																			"Perform exact model checking." },
 																			
@@ -263,6 +270,8 @@ public class PrismSettings implements Observer
 																			"Which method to use for model checking of PTAs." },
 			{ CHOICE_TYPE,		PRISM_TRANSIENT_METHOD,					"Transient probability computation method",	"3.3",		"Uniformisation",															"Uniformisation,Fast adaptive uniformisation",																
 																			"Which method to use for computing transient probabilities in CTMCs." },
+			{ CHOICE_TYPE,		PRISM_SMT_SOLVER,						"SMT solver",	"4.5",		"Z3",															"Z3,Yices",																
+																			"Which external solver to use for SMT problems." },
 			// NUMERICAL SOLUTION OPTIONS:
 			{ CHOICE_TYPE,		PRISM_LIN_EQ_METHOD,					"Linear equations method",				"2.1",			"Jacobi",																	"Power,Jacobi,Gauss-Seidel,Backwards Gauss-Seidel,Pseudo-Gauss-Seidel,Backwards Pseudo-Gauss-Seidel,JOR,SOR,Backwards SOR,Pseudo-SOR,Backwards Pseudo-SOR",
 																			"Which iterative method to use when solving linear equation systems." },
@@ -288,6 +297,8 @@ public class PrismSettings implements Observer
 																			"Maximum number of iterations to perform if iterative methods do not converge." },
 			{ BOOLEAN_TYPE,		PRISM_EXPORT_ITERATIONS,				"Export iterations (debug/visualisation)",			"4.3.1",			false,														"",
 																			"Export solution vectors for iteration algorithms to iterations.html"},
+			{ INTEGER_TYPE,		PRISM_GRID_RESOLUTION,					"Fixed grid resolution",			    "4.5",			new Integer(10),															"1,",																						
+																			"The resolution for the fixed grid approximation algorithm for POMDPs." },
 			// MODEL CHECKING OPTIONS:
 			{ BOOLEAN_TYPE,		PRISM_PRECOMPUTATION,					"Use precomputation",					"2.1",			new Boolean(true),															"",																							
 																			"Whether to use model checking precomputation algorithms (Prob0, Prob1, etc.), where optional." },
@@ -326,8 +337,6 @@ public class PrismSettings implements Observer
 			{ STRING_TYPE,		PRISM_EXPORT_PARETO_FILENAME,			"Pareto curve export filename",			"4.0.3",			"",															"0,",																						
 																			"If non-empty, any Pareto curve generated will be exported to this file." },
 			// MULTI-OBJECTIVE SYNTHESIS:
-			{ BOOLEAN_TYPE,		PRISM_MULTI_COMP,							"Check compatibility",				"4.0.3",		new Boolean(false),															"",																							
-																			"Whether to check compatibility of components automatically." },
 			{ BOOLEAN_TYPE,		PRISM_MULTI_GAUSS_SEIDEL,							"Use Gauss-Seidel value iteration for solving multi-objective SGs.",				"4.0.3",		new Boolean(true),															"",																							
 																			"Use Gauss-Seidel value iteration for solving multi-objective SGs. Only used for cumulative total rewards (Pareto set computation and strategy synthesis), and for strategy synthesis of average and ratio rewards." },
 			{ INTEGER_TYPE,		PRISM_MULTI_MAX_C_ITER,					"Max. iterations for conjunctive query",			"4.0.3",			new Integer(500),															"0,",																						
@@ -348,7 +357,9 @@ public class PrismSettings implements Observer
 																			"Value iteration starts computing points rounded to the maximum reward in each dimension divided by the baseline accuracy, and this accuracy is increased by the increase factor after every iteration." },
 			{ DOUBLE_TYPE,		PRISM_MULTI_INCREASE_FACTOR,					"Increase factor for conjunctive query value iteration",			"4.0.3",			new Double(1.01),															"0,",																						
 																			"Accuracy of conjunctive query value iteration is increased by the increase factor after every iteration." },
-
+			// CSG ZERO-SUM LP SCALE FACTOR
+			{ DOUBLE_TYPE,		PRISM_ZS_LP_SCALE_FACTOR, 					"Scale factor for LPs",			"4.5", 				new Double(1.0), 			"1,",
+																			"Scale factor used when building linear programs for solving matrix games"},
 
 			// OUTPUT OPTIONS:
 			{ BOOLEAN_TYPE,		PRISM_VERBOSE,							"Verbose output",						"2.1",		new Boolean(false),															"",																							
@@ -684,10 +695,66 @@ public class PrismSettings implements Observer
 			listener.notifySettings(this);
 		}
 	}
-	
+
+	/**
+	 * Get the default location of the settings file.
+	 * <br>
+	 * There is a legacy location (filename '.prism' in the user's
+	 * home directory), and a modern location, which depends on the
+	 * operating system:
+	 * <ul>
+	 * <li>For macOS, the location is $HOME/Library/Preferences/prism.settings</li>
+	 * <li>For Linux, the location depends on the environment variable $XDG_CONFIG_HOME;
+	 * if set, the location is $XDG_CONFIG_HOME/prism.settings;
+	 * if not, it's $HOME/.config/prism.settings</li>
+	 * <li>On Windows, only the legacy location is supported</li>
+	 * </ul>
+	 * <br>
+	 * If the legacy settings file exists, this method returns that location.
+	 * Otherwise, the modern location is returned.
+	 * <br>
+	 * To support different settings files in derived tools (e.g. prism-games),
+	 * the filename is derived from the tool name (see Prism.getToolName()).
+	 */
 	public File getLocationForSettingsFile()
 	{
-		return new File(System.getProperty("user.home")+File.separator+".prism-games");
+		String toolName = Prism.getToolName().toLowerCase();
+		File legacyConfigFile = new File(System.getProperty("user.home") +
+				File.separator + "." + toolName);
+		if (legacyConfigFile.exists() && !legacyConfigFile.isDirectory()) {
+			return legacyConfigFile;
+		}
+		
+		// Check for operating system, try XDG base directory specification if
+		// UNIX-like system (except for MacOS) is found
+		String os = System.getProperty("os.name").toLowerCase();
+		File config;
+		if (os.indexOf("win") >= 0) { // Windows
+			// use "$HOME\.prism"
+			config = new File(System.getProperty("user.home") +
+					File.separator + "." + toolName);
+		} else if (os.indexOf("mac") >= 0) { // MacOS
+			// use "$HOME/Library/Preferences/prism/prism.settings"
+			config = new File(System.getProperty("user.home") +
+					"/Library/Preferences/" + toolName + ".settings");
+		} else if (os.indexOf("nix") >= 0 || os.indexOf("nux") >= 0 ||
+				os.indexOf("aix") >= 0 || os.indexOf("sunos") >= 0 ||
+				os.indexOf("bsd") >= 0) { // Linux, AIX, Solaris, *BSD
+			// check for $XDG_CONFIG_HOME
+			String configBase = System.getenv("XDG_CONFIG_HOME");
+			if (configBase == null) {
+				configBase = System.getProperty("user.home") + "/.config";
+			}
+			if (configBase.endsWith("/")) {
+				configBase = configBase.substring(0, configBase.length() - 1);
+			}
+			config = new File(configBase + "/" + toolName + ".settings");
+		} else { // unknown operating system
+			// use "$HOME\.prism"
+			config = new File(System.getProperty("user.home") +
+					File.separator + "." + toolName);
+		}
+		return config;
 	}
 	
 	public synchronized void saveSettingsFile() throws PrismException
@@ -697,11 +764,26 @@ public class PrismSettings implements Observer
 	
 	public synchronized void saveSettingsFile(File file) throws PrismException
 	{
-		try
-		{
-			FileWriter out = new FileWriter(file);
+		// first, we ensure the directories for the file that don't exist yet
+		// are created
+		File parent = null;
+		try {
+			parent = file.getAbsoluteFile().getParentFile();
+			if (parent != null && !parent.exists()) {
+				parent.mkdirs();
+			}
+		} catch (Exception e) {
+			if (parent != null) {
+				throw new PrismException("Error creating required directories (" + parent + ") for file " + file + ": " +e.getMessage());
+			} else {
+				throw new PrismException("Error creating required directories for file " + file + ": " +e.getMessage());
+			}
+		}
+
+		// and now, we write the settings to file
+		try (FileWriter out = new FileWriter(file)) {
 			
-			out.write("# PRISM settings file\n");
+			out.write("# " + Prism.getToolName() + " settings file\n");
 			out.write("# (created by version "+Prism.getVersion()+")\n");
 			
 			for(int i = 0; i < optionOwners.length; i++)
@@ -874,7 +956,7 @@ public class PrismSettings implements Observer
 		// If necessary, resave the preferences file
 		if (resaveNeeded) {
 			try {
-				saveSettingsFile();
+				saveSettingsFile(file);
 			}
 			catch (PrismException e) {
 			}
@@ -1017,6 +1099,34 @@ public class PrismSettings implements Observer
 				throw new PrismException("No parameter specified for -" + sw + " switch");
 			}
 		}
+		// Solvers
+		else if (sw.equals("smtsolver")) {
+			if (i < args.length - 1) {
+				s = args[++i];
+				if (s.equals("z3"))
+					set(PRISM_SMT_SOLVER, "Z3");
+				else if (s.equals("yices"))
+					set(PRISM_SMT_SOLVER, "Yices");
+				else
+					throw new PrismException("Unrecognised option for -" + sw + " switch (options are: z3, yices)");
+			}
+		}
+		// Heuristic modes
+		else if (sw.equals("heuristic")) {
+			if (i < args.length - 1) {
+				s = args[++i];
+				if (s.equals("none"))
+					set(PRISM_HEURISTIC, "None");
+				else if (s.equals("speed"))
+					set(PRISM_HEURISTIC, "Speed");
+				else if (s.equals("memory"))
+					set(PRISM_HEURISTIC, "Memory");
+				else
+					throw new PrismException("Unrecognised option for -" + sw + " switch (options are: none, speed, memory)");
+			} else {
+				throw new PrismException("No parameter specified for -" + sw + " switch");
+			}
+		}
 
 		// NUMERICAL SOLUTION OPTIONS:
 		
@@ -1056,6 +1166,20 @@ public class PrismSettings implements Observer
 		} else if (sw.equals("linprog") || sw.equals("lp")) {
 			set(PRISM_MDP_SOLN_METHOD, "Linear programming");
 			set(PRISM_MDP_MULTI_SOLN_METHOD, "Linear programming");
+		}
+		else if (sw.equals("lpscalefactor")) {// Scale factor for LPs (zero-sum)
+			if (i < args.length - 1) {
+				try {
+					d = Double.parseDouble(args[++i]);
+					if (Double.compare(d, 1.0) < 0)
+						throw new NumberFormatException("");
+					set(PRISM_ZS_LP_SCALE_FACTOR, d);
+				} catch (NumberFormatException e) {
+					throw new PrismException("Invalid value for -" + sw + " switch");
+				}
+			} else {
+				throw new PrismException("No value specified for -" + sw + " switch");
+			}
 		}
 
 		// Interval iterations
@@ -1144,6 +1268,21 @@ public class PrismSettings implements Observer
 		// export iterations
 		else if (sw.equals("exportiterations")) {
 			set(PRISM_EXPORT_ITERATIONS, true);
+		}
+		// fixed grid resolution
+		else if (sw.equals("gridresolution")) {
+			if (i < args.length - 1) {
+				try {
+					j = Integer.parseInt(args[++i]);
+					if (j < 0)
+						throw new NumberFormatException("");
+					set(PRISM_GRID_RESOLUTION, j);
+				} catch (NumberFormatException e) {
+					throw new PrismException("Invalid value for -" + sw + " switch");
+				}
+			} else {
+				throw new PrismException("No value specified for -" + sw + " switch");
+			}
 		}
 		
 		// MODEL CHECKING OPTIONS:
@@ -1287,12 +1426,6 @@ public class PrismSettings implements Observer
 		}
 
 		// MULTI-OBJECTIVE SYNTHESIS OPTIONS:
-		else if (sw.equals("nocompatibility")) {
-			set(PRISM_MULTI_COMP, false);
-		}
-		else if (sw.equals("compatibility")) {
-			set(PRISM_MULTI_COMP, true);
-		}
 		else if (sw.equals("multimaxciter")) {
 			if (i < args.length - 1) {
 				try {
@@ -1592,6 +1725,7 @@ public class PrismSettings implements Observer
 					break;
 				case "spot":
 					set(PRISM_LTL2DA_SYNTAX, "Spot");
+					break;
 				case "rabinizer":
 					set(PRISM_LTL2DA_SYNTAX, "Rabinizer");
 					break;
@@ -1886,6 +2020,8 @@ public class PrismSettings implements Observer
 		mainLog.println("-exact ......................... Perform exact (arbitrary precision) model checking");
 		mainLog.println("-ptamethod <name> .............. Specify PTA engine (games, digital, backwards) [default: games]");
 		mainLog.println("-transientmethod <name> ........ CTMC transient analysis methof (unif, fau) [default: unif]");
+		mainLog.println("-smtsolver <name> .............. SMT solver (z3, yices) [default: z3]");
+		mainLog.println("-heuristic <mode> .............. Automatic choice of engines/settings (none, speed, memory) [default: none]");
 		mainLog.println();
 		mainLog.println("SOLUTION METHODS (LINEAR EQUATIONS):");
 		mainLog.println("-power (or -pow, -pwr) ......... Use the Power method for numerical computation");
@@ -1914,6 +2050,7 @@ public class PrismSettings implements Observer
 		mainLog.println("-absolute (or -abs) ............ Use absolute error for detecting convergence");
 		mainLog.println("-epsilon <x> (or -e <x>) ....... Set value of epsilon (for convergence check) [default: 1e-6]");
 		mainLog.println("-maxiters <n> .................. Set max number of iterations [default: 10000]");
+		mainLog.println("-gridresolution <n> .............Set resolution for fixed grid approximation (POMDP) [default: 10]");
 		
 		mainLog.println();
 		mainLog.println("MODEL CHECKING OPTIONS:");
@@ -1940,7 +2077,6 @@ public class PrismSettings implements Observer
 		mainLog.println("-ltl2dasyntax <x> .............. Specify output format for -ltl2datool switch (lbt, spin, spot, rabinizer)");
 		mainLog.println("-exportiterations .............. Export vectors for iteration algorithms to file");
 		mainLog.println("-pmaxquotient .................. For Pmax computations in MDPs, compute in the MEC quotient");
-		
 		mainLog.println();
 		mainLog.println("MULTI-OBJECTIVE MODEL CHECKING:");
 		mainLog.println("-linprog (or -lp) .............. Use linear programming for multi-objective model checking");
@@ -1961,6 +2097,9 @@ public class PrismSettings implements Observer
 		mainLog.println("-multirounding ................. Enable rounding for the multi-objective engine.");
 		mainLog.println("-baselineaccuracy <n> .......... Baseline accuracy for CQs.");
 		mainLog.println("-increasefactor <x> ............ Factor by which accuracy is increased every iteration for CQs.");
+		mainLog.println();
+		mainLog.println("CSG EQUILIBRIA COMPUTATION");
+		mainLog.println("-lpscalefactor <n> ............. Scale factor used when building linear programs for solving matrix games [default: 1.0]");
 		mainLog.println();
 		mainLog.println("OUTPUT OPTIONS:");
 		mainLog.println("-verbose (or -v) ............... Verbose mode: print out state lists and probability vectors");

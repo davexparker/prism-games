@@ -362,6 +362,7 @@ public class TypeCheck extends ASTTraverse
 		case ExpressionFunc.MAX:
 		case ExpressionFunc.FLOOR:
 		case ExpressionFunc.CEIL:
+		case ExpressionFunc.ROUND:
 		case ExpressionFunc.POW:
 		case ExpressionFunc.LOG:
 			// All operands must be ints or doubles
@@ -395,16 +396,6 @@ public class TypeCheck extends ASTTraverse
 				}
 			}
 			break;
-		case ExpressionFunc.COMP:
-			// All operands must be booleans, doubles, or ints
-			for (i = 0; i < n; i++) {
-				if (!(types[i] instanceof TypeBool || types[i] instanceof TypeDouble || types[i] instanceof TypeInt)) {
-					throw new PrismLangException("Type error: non-Boolean/Double/Integer argument to  function \"" + e.getName()
-							+ "\"", e.getOperand(i));
-				}
-			}
-			break;
-			
 		default:
 			throw new PrismLangException("Cannot type check unknown function", e);
 		}
@@ -424,6 +415,7 @@ public class TypeCheck extends ASTTraverse
 			break;
 		case ExpressionFunc.FLOOR:
 		case ExpressionFunc.CEIL:
+		case ExpressionFunc.ROUND:
 		case ExpressionFunc.MOD:
 			// Resulting type is always int
 			e.setType(TypeInt.getInstance());
@@ -444,10 +436,6 @@ public class TypeCheck extends ASTTraverse
 				e.setType(TypeDouble.getInstance());
 			else
 				e.setType(TypeVoid.getInstance());
-			break;
-		case ExpressionFunc.COMP:
-			// Resulting type is Pareto
-		    e.setType(TypeBool.getInstance());
 			break;
 		}
 	}
@@ -550,6 +538,29 @@ public class TypeCheck extends ASTTraverse
 			e.setType(e.getReward() == null ? TypeDouble.getInstance() : TypeBool.getInstance());
 		}
 	}
+	
+	public void visitPost(ExpressionMultiNash e) throws PrismLangException
+	{
+		// Check bound
+		if (e.getBound() != null && !TypeDouble.getInstance().canAssign(e.getBound().getType())) {
+			throw new PrismLangException("Type error: Equilibria operator bound is not a double", e.getBound());
+		}
+		
+		// Check reward struct ref(s) if any
+		for (ExpressionQuant eq : e.getOperands()) {
+			if (eq instanceof ExpressionMultiNashReward) {
+				if (((ExpressionMultiNashReward) eq).getRewardStructIndex() != null && ((ExpressionMultiNashReward) eq).getRewardStructIndex() instanceof Expression) {
+					Expression rsi = (Expression) ((ExpressionMultiNashReward) eq).getRewardStructIndex();
+					if (!(rsi.getType() instanceof TypeInt)) {
+						throw new PrismLangException("Type error: Reward structure index must be string or integer", rsi);
+					}
+				}
+			}
+		}
+		
+		// Set type
+		e.setType(e.getBound() == null ? TypeDouble.getInstance() : TypeBool.getInstance());
+	}
 
 	public void visitPost(ExpressionSS e) throws PrismLangException
 	{
@@ -628,7 +639,7 @@ public class TypeCheck extends ASTTraverse
 			e.setType(prop.getType());
 		}
 	}
-
+	
 	public void visitPost(ExpressionFilter e) throws PrismLangException
 	{
 		// Get type of operand
@@ -668,6 +679,7 @@ public class TypeCheck extends ASTTraverse
 		case FIRST:
 		case PRINT:
 		case PRINTALL:
+		case STORE:
 			if (t instanceof TypeVoid) {
 				throw new PrismLangException("Type error: Void/complex arguments not allowed as operand for filter of type \"" + e.getOperatorName() + "\"",
 						e.getOperand());
@@ -688,6 +700,7 @@ public class TypeCheck extends ASTTraverse
 		case FIRST:
 		case PRINT:
 		case PRINTALL:
+		case STORE:
 		case STATE:
 			e.setType(t);
 			break;

@@ -31,18 +31,14 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.util.ArrayList;
 import java.util.BitSet;
-import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 
+import parser.Observation;
 import parser.State;
+import parser.Unobservation;
 import parser.Values;
 import parser.VarList;
-import parser.ast.ModulesFile;
-import parser.ast.SystemBrackets;
-import parser.ast.SystemDefn;
-import parser.ast.SystemFullParallel;
-import parser.ast.SystemReference;
 import prism.ModelGenerator;
 import prism.ModelType;
 import prism.Prism;
@@ -53,7 +49,6 @@ import prism.PrismNotSupportedException;
 import prism.PrismPrintStreamLog;
 import prism.ProgressDisplay;
 import prism.UndefinedConstants;
-import simulator.ModulesFileModelGenerator;
 
 /**
  * Class to perform explicit-state reachability and model construction.
@@ -68,6 +63,8 @@ public class ConstructModel extends PrismComponent
 	protected boolean findDeadlocks = true;
 	/** Automatically fix deadlocks? */
 	protected boolean fixDeadlocks = true;
+	/** Sort the reachable states before constructing the model? */
+	protected boolean sortStates = true;
 	/** Build a sparse representation, if possible?
 	 *  (e.g. MDPSparse rather than MDPSimple data structure) */
 	protected boolean buildSparse = true;
@@ -75,9 +72,6 @@ public class ConstructModel extends PrismComponent
 	protected boolean distinguishActions = true;
 	/** Should labels be processed and attached to the model? */
 	protected boolean attachLabels = true;
-
-	/** Automatically check compatibility? */
-	protected boolean checkCompatibility = false;
 
 	// Details of built model:
 
@@ -107,6 +101,14 @@ public class ConstructModel extends PrismComponent
 	}
 
 	/**
+	 * Sort the reachable states before constructing the model?
+	 */
+	public void setSortStates(boolean sortStates)
+	{
+		this.sortStates = sortStates;
+	}
+
+	/**
 	 * Build a sparse representation, if possible?
 	 * (e.g. MDPSparse rather than MDPSimple data structure)
 	 */
@@ -132,20 +134,12 @@ public class ConstructModel extends PrismComponent
 	}
 
 	/**
-	 * Automatically check compatibility?
-	 */
-	public void setCheckCompatibility(boolean checkCompatibility)
-	{
-		this.checkCompatibility = checkCompatibility;
-	}
-
-	/**
 	 * Build the set of reachable states for a model and return it.
 	 * @param modelGen The ModelGenerator interface providing the model 
 	 */
 	public List<State> computeReachableStates(ModelGenerator modelGen) throws PrismException
 	{
-		constructModel(modelGen, true, null);
+		constructModel(modelGen, true);
 		return getStatesList();
 	}
 
@@ -155,7 +149,7 @@ public class ConstructModel extends PrismComponent
 	 */
 	public Model constructModel(ModelGenerator modelGen) throws PrismException
 	{
-		return constructModel(modelGen, false, null);
+		return constructModel(modelGen, false);
 	}
 
 	/**
@@ -166,7 +160,7 @@ public class ConstructModel extends PrismComponent
 	 * @param justReach If true, just build the reachable state set, not the model
 	 *
 	 */
-	public Model constructModel(ModelGenerator modelGen, boolean justReach, boolean[] cancel_computation) throws PrismException
+	public Model constructModel(ModelGenerator modelGen, boolean justReach) throws PrismException
 	{
 		// Model info
 		ModelType modelType;
@@ -179,24 +173,25 @@ public class ConstructModel extends PrismComponent
 		DTMCSimple dtmc = null;
 		CTMCSimple ctmc = null;
 		MDPSimple mdp = null;
+		POMDPSimple pomdp = null;
 		CTMDPSimple ctmdp = null;
 		STPGExplicit stpg = null;
+		CSG csg = null;
 		SMG smg = null;
+		LTSSimple lts = null;
 		ModelExplicit model = null;
 		Distribution distr = null;
+		// Observation info
+		List<String> observableVars = null;
+		List<String> unobservableVars = null;
+		// Game info
+		List<String> playerNames = null;
 		// Misc
 		int i, j, nc, nt, src, dest, player;
 		long timer;
 
 		// Get model info
 		modelType = modelGen.getModelType();
-
-		// For PRISM SMGs with a system definition, we build compositionally
-		if (modelGen instanceof ModulesFileModelGenerator && modelType == ModelType.SMG
-				&& ((ModulesFileModelGenerator) modelGen).getModulesFile().getSystemDefn() != null) {
-			// default is to not check compatibility
-			return constructSMGModelCompositionally(((ModulesFileModelGenerator) modelGen).getModulesFile(), justReach, cancel_computation);
-		}
 
 		// Display a warning if there are unbounded vars
 		VarList varList = modelGen.createVarList();
@@ -210,52 +205,82 @@ public class ConstructModel extends PrismComponent
 		progress.start();
 		timer = System.currentTimeMillis();
 
+		// For games, extract/check player info
+		if (modelType.multiplePlayers()) {
+			playerNames = new ArrayList<>();
+			for (i = 0; i < modelGen.getNumPlayers(); i++) {
+				String name = modelGen.getPlayerName(i);
+				if (!("".equals(name)) && playerNames.contains(name)) {
+					throw new PrismException("Duplicate player name \"" + name + "\""); 
+				}
+				playerNames.add(name);
+			}
+		}
+		
+		// For CSGs, action names mucst be provided
+		if (modelType.concurrent() && modelGen.getActions() == null) {
+			throw new PrismException("Model generator must implement getActions() for concurrent games");
+		}
+		
 		// Create model storage
 		if (!justReach) {
 			// Create a (simple, mutable) model of the appropriate type
 			switch (modelType) {
 			case DTMC:
 				modelSimple = dtmc = new DTMCSimple();
-				dtmc.setVarList(varList);
 				break;
 			case CTMC:
 				modelSimple = ctmc = new CTMCSimple();
-				ctmc.setVarList(varList);
 				break;
+			case CSG:
+				modelSimple = csg = new CSG(playerNames.toArray(new String[0]));
+				csg.setActions(modelGen.getActions());
+				break;			
 			case MDP:
 				modelSimple = mdp = new MDPSimple();
-				mdp.setVarList(varList);
+				break;
+			case POMDP:
+				modelSimple = pomdp = new POMDPSimple();
 				break;
 			case CTMDP:
 				modelSimple = ctmdp = new CTMDPSimple();
-				ctmdp.setVarList(varList);
+				break;
+			case LTS:
+				modelSimple = lts = new LTSSimple();
 				break;
 			case STPG:
 				modelSimple = stpg = new STPGExplicit();
-				stpg.setVarList(varList);
 				break;
 			case SMG:
-				if (modelGen instanceof ModulesFileModelGenerator && modelType == ModelType.SMG
-						&& ((ModulesFileModelGenerator) modelGen).getModulesFile().getModuleNames() != null
-						&& ((ModulesFileModelGenerator) modelGen).getModulesFile().getModuleNames().length > 0) {
-					modelSimple = smg = new SMG(((ModulesFileModelGenerator) modelGen).getModulesFile().getModuleName(0));
-				} else {
-					modelSimple = smg = new SMG();
-				}
-				smg.setVarList(varList);
-				// Add player info
-				HashMap<Integer, String> playerNames = new HashMap<Integer, String>();
-				for (i = 0; i < modelGen.getNumPlayers(); i++) {
-					playerNames.put(i + 1, modelGen.getPlayer(i).getName());
-				}
+				modelSimple = smg = new SMG();
 				smg.setPlayerInfo(playerNames);
 				break;
 			case PTA:
-			case LTS:
+			case POPTA:
 				throw new PrismNotSupportedException("Model construction not supported for " + modelType + "s");
 			}
+			// Attach variable info
+	        ((ModelExplicit) modelSimple).setVarList(varList);
 		}
 
+		// For partially observable models,
+		// get info needed to determine observability
+		if (!justReach && modelType.partiallyObservable()) {
+			List<String> allVars = modelGen.getVarNames();
+			observableVars = modelGen.getObservableVars();
+			for (String obsVar : observableVars) {
+				if (!allVars.contains(obsVar)) {
+					throw new PrismException("Observable " + obsVar + " is not a variable");
+				}
+			}
+			unobservableVars = new ArrayList<>();
+			for (String varName : allVars) {
+				if (!observableVars.contains(varName)) {
+					unobservableVars.add(varName);
+				}
+			}
+		}
+		
 		// Initialise states storage
 		states = new IndexedSet<State>(true);
 		explore = new LinkedList<State>();
@@ -268,6 +293,7 @@ public class ConstructModel extends PrismComponent
 				modelSimple.addInitialState(modelSimple.getNumStates() - 1);
 			}
 		}
+
 		// Explore...
 		src = -1;
 		while (!explore.isEmpty()) {
@@ -278,28 +304,29 @@ public class ConstructModel extends PrismComponent
 			// Explore all choices/transitions from this state
 			modelGen.exploreState(state);
 			nc = modelGen.getNumChoices();
-			// For games, first determine which player owns the state
-			if (modelType.multiplePlayers()) {
-				player = -1;
-				for (i = 0; i < nc; i++) {
-					int iPlayer = modelGen.getPlayerNumberForChoice(i);
-					if (player != -1 && iPlayer != player) {
-						throw new PrismException("PRISM-games only supports turn-based stochastic games, but there are choices for both player " + player + " and " + iPlayer + " in state " + state);
-					}
-					player = iPlayer;
-				}
-				// Assign deadlock states to player 1
-				if (nc == 0) {
-					player = 1;
-				}
+			// For turn-based games, first determine which player owns the state
+			if (modelType.multiplePlayers() && !modelType.concurrent()) {
+				player = modelGen.getPlayerOwningState();
 				if (modelType == ModelType.STPG) {
-					stpg.setPlayer(src, player);
+					stpg.setPlayer(src, player + 1);
 				} else if (modelType == ModelType.SMG) {
-					smg.setPlayer(src, player);
+					smg.setPlayer(src, player + 1);
 				}
+			}
+			else if (modelType == ModelType.CSG) {
+				csg.setPlayer(src, 1);
 			}
 			// Look at each outgoing choice in turn
 			for (i = 0; i < nc; i++) {
+				// If required, check for duplicate actions here
+				if (modelType.partiallyObservable()) {
+					if (((NondetModel) modelSimple).getChoiceByAction(src, modelGen.getChoiceAction(i)) != -1) {
+						String act = modelGen.getChoiceAction(i) == null ? "" : modelGen.getChoiceAction(i).toString();
+						String err = modelType + " is not allowed duplicate action";
+						err += " (\"" + act + "\") in state " + state.toString(modelGen);
+						throw new PrismException(err);
+					}
+				}
 				// For nondet models, collect transitions in a Distribution
 				if (!justReach && modelType.nondeterministic()) {
 					distr = new Distribution();
@@ -308,7 +335,6 @@ public class ConstructModel extends PrismComponent
 				nt = modelGen.getNumTransitions(i);
 				for (j = 0; j < nt; j++) {
 					stateNew = modelGen.computeTransitionTarget(i, j);
-
 					// Is this a new state?
 					if (states.add(stateNew)) {
 						// If so, add to the explore list
@@ -330,13 +356,21 @@ public class ConstructModel extends PrismComponent
 							ctmc.addToProbability(src, dest, modelGen.getTransitionProbability(i, j));
 							break;
 						case MDP:
+						case POMDP:
 						case CTMDP:
 						case STPG:
 						case SMG:
+						case CSG:
 							distr.add(dest, modelGen.getTransitionProbability(i, j));
 							break;
-						case PTA:
 						case LTS:
+							if (distinguishActions) {
+								lts.addActionLabelledTransition(src, dest, modelGen.getChoiceAction(i));
+							} else {
+								lts.addTransition(src, dest);
+							}
+							break;
+						case PTA:
 							throw new PrismNotSupportedException("Model construction not supported for " + modelType + "s");
 						}
 					}
@@ -349,6 +383,12 @@ public class ConstructModel extends PrismComponent
 						} else {
 							mdp.addChoice(src, distr);
 						}
+					} else if (modelType == ModelType.POMDP) {
+						if (distinguishActions) {
+							pomdp.addActionLabelledChoice(src, distr, modelGen.getChoiceAction(i));
+						} else {
+							pomdp.addChoice(src, distr);
+						}
 					} else if (modelType == ModelType.CTMDP) {
 						if (distinguishActions) {
 							ctmdp.addActionLabelledChoice(src, distr, modelGen.getChoiceAction(i));
@@ -360,6 +400,14 @@ public class ConstructModel extends PrismComponent
 							stpg.addActionLabelledChoice(src, distr, modelGen.getTransitionAction(i, 0));
 						} else {
 							stpg.addChoice(src, distr);
+						}
+					}
+					else if (modelType == ModelType.CSG) {
+						if (distinguishActions) {
+							csg.addActionLabelledChoice(src, distr, modelGen.getTransitionIndexes(i));
+						} 
+						else {
+							csg.addChoice(src, distr, modelGen.getTransitionIndexes(i));
 						}
 					} else if (modelType == ModelType.SMG) {
 						if (distinguishActions) {
@@ -382,21 +430,31 @@ public class ConstructModel extends PrismComponent
 		mainLog.print("Reachable states exploration" + (justReach ? "" : " and model construction"));
 		mainLog.println(" done in " + ((System.currentTimeMillis() - timer) / 1000.0) + " secs.");
 		//mainLog.println(states);
-
+		
 		// Find/fix deadlocks (if required)
 		if (!justReach && findDeadlocks) {
-			modelSimple.findDeadlocks(fixDeadlocks);
+			if (modelType != ModelType.CSG) {
+				modelSimple.findDeadlocks(fixDeadlocks);
+			}
+			else {
+				modelSimple.findDeadlocks(false);
+				// Fixes deadlocks for concurrent games...this may have to be changed though
+				if(modelSimple.getNumDeadlockStates() > 0) {
+					for(Integer s : modelSimple.getDeadlockStates()) {
+						csg.fixDeadlock(s);
+					}			
+				}
+			}
 		}
-
-		boolean sort = true;
+				
 		int permut[] = null;
 
-		if (sort) {
+		if (sortStates) {
 			// Sort states and convert set to list
 			mainLog.println("Sorting reachable states list...");
 			permut = states.buildSortingPermutation();
 			statesList = states.toPermutedArrayList(permut);
-			//mainLog.println(permut);
+			//mainLog.println("Arrays.toString(permut));
 		} else {
 			statesList = states.toArrayList();
 		}
@@ -404,53 +462,91 @@ public class ConstructModel extends PrismComponent
 		states = null;
 		//mainLog.println(permut);
 		//mainLog.println(statesList);
-
+		
 		// Construct new explicit-state model (with correct state ordering)
 		if (!justReach) {
 			switch (modelType) {
 			case DTMC:
 				if (buildSparse) {
-					model = sort ? new DTMCSparse(dtmc, permut) : new DTMCSparse(dtmc);
+					model = sortStates ? new DTMCSparse(dtmc, permut) : new DTMCSparse(dtmc);
 				} else {
-					model = sort ? new DTMCSimple(dtmc, permut) : (DTMCSimple) dtmc;
+					model = sortStates ? new DTMCSimple(dtmc, permut) : (DTMCSimple) dtmc;
 				}
 				break;
 			case CTMC:
-				model = sort ? new CTMCSimple(ctmc, permut) : (CTMCSimple) ctmc;
+				model = sortStates ? new CTMCSimple(ctmc, permut) : (CTMCSimple) ctmc;
 				break;
 			case MDP:
 				if (buildSparse) {
-					model = sort ? new MDPSparse(mdp, true, permut) : new MDPSparse(mdp);
+					model = sortStates ? new MDPSparse(mdp, true, permut) : new MDPSparse(mdp);
 				} else {
-					model = sort ? new MDPSimple(mdp, permut) : mdp;
+					model = sortStates ? new MDPSimple(mdp, permut) : mdp;
 				}
 				break;
+			case POMDP:
+				model = sortStates ? new POMDPSimple(pomdp, permut) : pomdp;
+				break;
 			case CTMDP:
-				model = sort ? new CTMDPSimple(ctmdp, permut) : mdp;
+				model = sortStates ? new CTMDPSimple(ctmdp, permut) : ctmdp;
+				break;
+			case CSG:
+				model = sortStates ? new CSG(csg, permut) : csg;
 				break;
 			case STPG:
-				model = sort ? new STPGExplicit(stpg, permut) : stpg;
+				model = sortStates ? new STPGExplicit(stpg, permut) : stpg;
 				break;
 			case SMG:
-				model = sort ? new SMG(smg, permut) : smg;
+				model = sortStates ? new SMG(smg, permut) : smg;
+				break;
+			case LTS:
+				model = sortStates ? new LTSSimple(lts, permut) : lts;
 				break;
 			case PTA:
-			case LTS:
 				throw new PrismNotSupportedException("Model construction not supported for " + modelType + "s");
 			}
 			model.setStatesList(statesList);
 			model.setConstantValues(new Values(modelGen.getConstantValues()));
 		}
 
+		// For partially observable models, add observation info to states
+		// (do it after full model construction, including deadlock fixing,
+		// because the number of choices for each observation are checked)
+		if (modelType == ModelType.POMDP) {
+			for (int s = 0; s < statesList.size(); s++) {
+				setStateObservation((POMDPSimple)model, s, statesList.get(s), observableVars, unobservableVars, modelGen);
+			}
+		}
+
+		// Add idle actions
+		if (modelType == ModelType.CSG) 
+			csg.addIdleIndexes();
+		
 		// Discard permutation
 		permut = null;
 
 		if (!justReach && attachLabels)
 			attachLabels(modelGen, model);
-
+				
 		return model;
 	}
 
+	private void setStateObservation(POMDPSimple pomdp, int s, State state, List<String> observableVars, List<String> unobservableVars, ModelGenerator modelGen) throws PrismException
+	{
+		Values values1 = new Values(state, modelGen);
+		for (String unobservableVarName : unobservableVars) {
+			values1.removeValue(unobservableVarName);
+		}
+		Observation observ = new Observation(values1, modelGen);
+		
+		Values values2 = new Values(state, modelGen);
+		for (String observableVarName : observableVars) {
+			values2.removeValue(observableVarName);
+		}
+		Unobservation unobserv = new Unobservation(values2, modelGen);
+
+		pomdp.setObservation(s, observ, unobserv);
+	}
+	
 	private void attachLabels(ModelGenerator modelGen, ModelExplicit model) throws PrismException
 	{
 		// Get state info
@@ -458,6 +554,8 @@ public class ConstructModel extends PrismComponent
 		int numStates = statesList.size();
 		// Create storage for labels
 		int numLabels = modelGen.getNumLabels();
+		// No need to continue unless this ModelGenerator uses labels
+		if (numLabels == 0) return;
 		BitSet bitsets[] = new BitSet[numLabels];
 		for (int j = 0; j < numLabels; j++) {
 			bitsets[j] = new BitSet();
@@ -479,95 +577,10 @@ public class ConstructModel extends PrismComponent
 	}
 
 	/**
-	 * Construct an explicit-state model for an SMG with a system definition (done compositionally).
-	 * If {@code justReach} is true, no model is built and null is returned;
-	 * the set of reachable states can be obtained with {@link #getStatesList()}.
-	 * @param modulesFile The PRISM model
-	 */
-	public Model constructSMGModelCompositionally(ModulesFile modulesFile, boolean justReach, boolean[] cancel_computation) throws PrismException
-	{
-		return constructSMGModelCompositionally(modulesFile, justReach, null, null, true, cancel_computation);
-	}
-
-	/**
-	* Compositionally constructs the explicit-state model for an SMG with a system definition.
-	* Returns the component games in {@code subsystems} and the corresponding modules files in
-	* {@code subsystemModulesFiles}. If {@code buildFullModel} or {@code checkCompatibility} is
-	* {@code true}, the full model is constructed. Otherwise, the full model is not constructed
-	* and and only the components are returned.
-	**/
-	public Model constructSMGModelCompositionally(ModulesFile modulesFile, boolean justReach, List<SMG> subsystems, List<ModulesFile> subsystemModulesFiles,
-			boolean buildFullModel, boolean[] cancel_computation) throws PrismException
-	{
-		// if compatibility check or full model build is requested, need to build full model in any case
-		if ((checkCompatibility || buildFullModel) && subsystems == null)
-			subsystems = new ArrayList<SMG>();
-		if ((checkCompatibility || buildFullModel) && subsystemModulesFiles == null)
-			subsystemModulesFiles = new ArrayList<ModulesFile>();
-
-		// Extract subsystems from system definition
-		SystemDefn sys = modulesFile.getSystemDefn();
-		if (sys == null) {
-			throw new PrismException("Can only construct the model compositionally if there is a system definition");
-		}
-		while (sys instanceof SystemBrackets) {
-			sys = ((SystemBrackets) sys).getOperand();
-		}
-
-		ArrayList<SystemReference> sysRefs = new ArrayList<SystemReference>();
-		ModulesFile.extractSubsystemRefs(sys, sysRefs);
-
-		// Extract modules in each subsystem ...
-		int numComps = sysRefs.size();
-		ArrayList<List<String>> moduleNameLists = new ArrayList<List<String>>();
-		for (int i = 0; i < numComps; i++) {
-			SystemDefn subsys = modulesFile.getSystemDefnByName(sysRefs.get(i).getName());
-			if (subsys == null) {
-				throw new PrismException("Unknown system reference" + sysRefs.get(i));
-			}
-			ArrayList<String> moduleNames = new ArrayList<String>();
-			ModulesFile.extractSubsystemModuleNames(subsys, moduleNames);
-			moduleNameLists.add(moduleNames);
-		}
-
-		// ... to build the subsystems individually.
-		setFixDeadlocks(false); // deadlocks not fixed
-		SMG m = null;
-		for (int i = 0; i < numComps; i++) {
-			// extract and store modules files for the composition later
-			ModulesFile modulesFile_i = (ModulesFile) modulesFile.deepCopy(moduleNameLists.get(i));
-			if (subsystemModulesFiles != null)
-				subsystemModulesFiles.add(modulesFile_i);
-			// construct the models
-			ModulesFileModelGenerator modelGen = new ModulesFileModelGenerator(modulesFile_i, this);
-			modelGen.setCompositional(true);
-			m = (SMG) constructModel(modelGen, justReach, cancel_computation);
-			// convert to normal form if necessary
-			if (m != null)
-				m.toNormalForm();
-			// add model to subsystem list
-			if (subsystems != null)
-				subsystems.add(m);
-		}
-		if (!justReach && (checkCompatibility || buildFullModel) && sys instanceof SystemFullParallel) {
-			// form composition and check compatibility (if requested)
-			double t0 = (double) System.nanoTime();
-			SMG smg_compositional = new SMG(modulesFile, subsystemModulesFiles, subsystems, mainLog, checkCompatibility, cancel_computation);
-
-			mainLog.print(String.format("product construction took %f s\n", ((double) (System.nanoTime() - t0)) / 1e9));
-			return smg_compositional;
-		} else {
-			return m;
-		}
-	}
-
-	/**
 	 * Test method.
 	 */
 	public static void main(String[] args)
 	{
-		boolean[] cancel_computation = new boolean[1]; // false by default
-
 		try {
 			// Simple example: parse a PRISM file from a file, construct the model and export to a .tra file
 			PrismLog mainLog = new PrismPrintStreamLog(System.out);
@@ -578,8 +591,9 @@ public class ConstructModel extends PrismComponent
 				undefinedConstants.defineUsingConstSwitch(args[2]);
 			modulesFile.setUndefinedConstants(undefinedConstants.getMFConstantValues());
 			ConstructModel constructModel = new ConstructModel(prism);
+			constructModel.setSortStates(true);
 			simulator.ModulesFileModelGenerator modelGen = new simulator.ModulesFileModelGenerator(modulesFile, constructModel);
-			Model model = constructModel.constructModel(modelGen, false, cancel_computation);
+			Model model = constructModel.constructModel(modelGen, false);
 			model.exportToPrismExplicitTra(args[1]);
 		} catch (FileNotFoundException e) {
 			System.out.println("Error: " + e.getMessage());

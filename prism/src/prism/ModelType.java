@@ -72,7 +72,35 @@ public enum ModelType
 		{
 			return RATE;
 		}
+
+		@Override
+		public ModelType removeNondeterminism()
+		{
+			return CTMC;
+		}
 	},
+	/*** ***/
+	CSG("concurrent stochastic game") {
+		@Override
+		public boolean multiplePlayers()
+		{
+			return true;
+		}
+		
+		@Override
+		public boolean concurrent()
+		{
+			return true;
+		}
+		
+		@Override
+		public ModelType removeNondeterminism()
+		{
+			return DTMC;
+		}
+	}
+	,
+	/*** ***/
 	DTMC("discrete-time Markov chain") {
 		@Override
 		public boolean nondeterministic()
@@ -92,9 +120,51 @@ public enum ModelType
 		{
 			return NEITHER;
 		}
+
+		@Override
+		public ModelType removeNondeterminism()
+		{
+			return DTMC;
+		}
 	},
 	MDP("Markov decision process") {
+		@Override
+		public ModelType removeNondeterminism()
+		{
+			return DTMC;
+		}
+	},
+	POMDP("partially observable Markov decision process") {
+		@Override
+		public boolean partiallyObservable()
+		{
+			return true;
+		}
 		
+		@Override
+		public ModelType removeNondeterminism()
+		{
+			return DTMC;
+		}
+	},
+	POPTA("partially observable probabilistic timed automaton") {
+		@Override
+		public boolean continuousTime()
+		{
+			return true;
+		}
+		
+		@Override
+		public boolean partiallyObservable()
+		{
+			return true;
+		}
+		
+		@Override
+		public ModelType removeNondeterminism()
+		{
+			return DTMC;
+		}
 	},
 	PTA("probabilistic timed automaton") {
 		@Override
@@ -109,12 +179,43 @@ public enum ModelType
 		{
 			return true;
 		}
+
+		@Override
+		public ModelType removeNondeterminism()
+		{
+			return DTMC;
+		}
 	},
 	SMG("stochastic multi-player game") {
 		@Override
 		public boolean multiplePlayers()
 		{
 			return true;
+		}
+
+		@Override
+		public ModelType removeNondeterminism()
+		{
+			return DTMC;
+		}
+	},
+	TPTG("turn-based probabilistic timed game") {
+		@Override
+		public boolean continuousTime()
+		{
+			return true;
+		}
+		
+		@Override
+		public boolean multiplePlayers()
+		{
+			return true;
+		}
+
+		@Override
+		public ModelType removeNondeterminism()
+		{
+			return DTMC;
 		}
 	};
 
@@ -178,6 +279,16 @@ public enum ModelType
 	}
 
 	/**
+	 * For game models, do the players make choices in a concurrent
+	 * (rather than turn-based) fashion? Note that this can only be true
+	 * for games so,if true, this also implies that multiplePlayers() is true.
+	 */
+	public boolean concurrent()
+	{
+		return false;
+	}
+
+	/**
 	 * Is this model probabilistic?
 	 */
 	public boolean isProbabilistic()
@@ -192,6 +303,27 @@ public enum ModelType
 	public String probabilityOrRate()
 	{
 		return PROBABILITY;
+	}
+
+	/**
+	 * Does the model feature partial observability? 
+	 */
+	public boolean partiallyObservable()
+	{
+		return false;
+	}
+	
+	/**
+	 * Return the model type that results from removing the nondeterminism
+	 * in this model type.
+	 * <br>
+	 * If there is no nondeterminism (or the removal of nondeterminism is not supported),
+	 * returns the same model type.
+	 */
+	public ModelType removeNondeterminism()
+	{
+		// default: same model type
+		return this;
 	}
 
 	public static ModelType parseName(String name)

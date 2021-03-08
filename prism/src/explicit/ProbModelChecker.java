@@ -27,9 +27,12 @@
 package explicit;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 
+import explicit.rewards.CSGRewards;
 import explicit.rewards.ConstructRewards;
 import explicit.rewards.MCRewards;
 import explicit.rewards.MDPRewards;
@@ -40,6 +43,10 @@ import parser.BooleanUtils;
 import parser.ast.Coalition;
 import parser.ast.Expression;
 import parser.ast.ExpressionFunc;
+import parser.ast.ExpressionLiteral;
+import parser.ast.ExpressionMultiNash;
+import parser.ast.ExpressionMultiNashProb;
+import parser.ast.ExpressionMultiNashReward;
 import parser.ast.ExpressionProb;
 import parser.ast.ExpressionQuant;
 import parser.ast.ExpressionReward;
@@ -47,14 +54,15 @@ import parser.ast.ExpressionSS;
 import parser.ast.ExpressionStrategy;
 import parser.ast.ExpressionTemporal;
 import parser.ast.ExpressionUnaryOp;
-import parser.ast.RewardStruct;
 import parser.type.TypeBool;
 import parser.type.TypeDouble;
 import parser.type.TypePathBool;
 import parser.type.TypePathDouble;
+import prism.AccuracyFactory;
 import prism.IntegerBound;
 import prism.ModelType;
 import prism.OpRelOpBound;
+import prism.Prism;
 import prism.PrismComponent;
 import prism.PrismException;
 import prism.PrismLog;
@@ -80,6 +88,8 @@ public class ProbModelChecker extends NonProbModelChecker
 	protected double termCritParam = 1e-8;
 	// Max iterations for numerical solution
 	protected int maxIters = 100000;
+	// Resolution for POMDP fixed grid approximation algorithm
+	protected int gridResolution = 10;
 	// Use precomputation algorithms in model checking?
 	protected boolean precomp = true;
 	protected boolean prob0 = true;
@@ -226,6 +236,8 @@ public class ProbModelChecker extends NonProbModelChecker
 			setTermCritParam(settings.getDouble(PrismSettings.PRISM_TERM_CRIT_PARAM));
 			// PRISM_MAX_ITERS
 			setMaxIters(settings.getInteger(PrismSettings.PRISM_MAX_ITERS));
+			// PRISM_GRID_RESOLUTION
+			setGridResolution(settings.getInteger(PrismSettings.PRISM_GRID_RESOLUTION));
 			// PRISM_PRECOMPUTATION
 			setPrecomp(settings.getBoolean(PrismSettings.PRISM_PRECOMPUTATION));
 			// PRISM_PROB0
@@ -267,6 +279,7 @@ public class ProbModelChecker extends NonProbModelChecker
 		setTermCrit(other.getTermCrit());
 		setTermCritParam(other.getTermCritParam());
 		setMaxIters(other.getMaxIters());
+		setGridResolution(other.getGridResolution());
 		setPrecomp(other.getPrecomp());
 		setProb0(other.getProb0());
 		setProb1(other.getProb1());
@@ -286,6 +299,7 @@ public class ProbModelChecker extends NonProbModelChecker
 		mainLog.print("termCrit = " + termCrit + " ");
 		mainLog.print("termCritParam = " + termCritParam + " ");
 		mainLog.print("maxIters = " + maxIters + " ");
+		mainLog.print("gridResolution = " + gridResolution + " ");
 		mainLog.print("precomp = " + precomp + " ");
 		mainLog.print("prob0 = " + prob0 + " ");
 		mainLog.print("prob1 = " + prob1 + " ");
@@ -354,6 +368,14 @@ public class ProbModelChecker extends NonProbModelChecker
 	public void setMaxIters(int maxIters)
 	{
 		this.maxIters = maxIters;
+	}
+
+	/**
+	 * Set resolution for POMDP fixed grid approximation algorithm.
+	 */
+	public void setGridResolution(int gridResolution)
+	{
+		this.gridResolution = gridResolution;
 	}
 
 	/**
@@ -454,6 +476,11 @@ public class ProbModelChecker extends NonProbModelChecker
 		return maxIters;
 	}
 
+	public int getGridResolution()
+	{
+		return gridResolution;
+	}
+
 	public boolean getPrecomp()
 	{
 		return precomp;
@@ -498,7 +525,6 @@ public class ProbModelChecker extends NonProbModelChecker
 	public StateValues checkExpression(Model model, Expression expr, BitSet statesOfInterest) throws PrismException
 	{
 		StateValues res;
-
 		// <<>> or [[]] operator
 		if (expr instanceof ExpressionStrategy) {
 			res = checkExpressionStrategy(model, (ExpressionStrategy) expr, statesOfInterest);
@@ -536,16 +562,21 @@ public class ProbModelChecker extends NonProbModelChecker
 		// Only support <<>> right now, not [[]]
 		if (!expr.isThereExists())
 			throw new PrismNotSupportedException("The " + expr.getOperatorString() + " operator is not yet supported");
-
+		
 		// Only support <<>> for MDPs/SMGs right now
-		if (!(this instanceof MDPModelChecker || this instanceof SMGModelChecker))
+		if (!(this instanceof MDPModelChecker || this instanceof SMGModelChecker || this instanceof CSGModelChecker))
 			throw new PrismNotSupportedException("The " + expr.getOperatorString() + " operator is only supported for MDPs and SMGs currently");
-
+		
 		// Will we be quantifying universally or existentially over strategies/adversaries?
 		boolean forAll = !expr.isThereExists();
 		
+		// Multiple coalitions only supported for CSGs
+		if (expr.getNumCoalitions() > 1 && model.getModelType() != ModelType.CSG) {
+			throw new PrismNotSupportedException("The " + expr.getOperatorString() + " operator can only contain one coalition");
+		}
 		// Extract coalition info
 		Coalition coalition = expr.getCoalition();
+		
 		// For non-games (i.e., models with a single player), deal with the coalition operator here and then remove it
 		if (coalition != null && !model.getModelType().multiplePlayers()) {
 			if (coalition.isEmpty()) {
@@ -554,12 +585,13 @@ public class ProbModelChecker extends NonProbModelChecker
 			}
 			coalition = null;
 		}
-
+		
 		// For now, just support a single expression (which may encode a Boolean combination of objectives)
 		List<Expression> exprs = expr.getOperands();
 		if (exprs.size() > 1) {
 			throw new PrismException("Cannot currently check strategy operators wth lists of expressions");
 		}
+		
 		Expression exprSub = exprs.get(0);
 		// Pass onto relevant method:
 		// P operator
@@ -574,12 +606,197 @@ public class ProbModelChecker extends NonProbModelChecker
 			}
 			return checkExpressionReward(model, (ExpressionReward) exprSub, forAll, coalition, statesOfInterest);
 		}
+		// Equilibria
+		else if (exprSub instanceof ExpressionMultiNash) {
+			return checkExpressionMultiNash(model, (ExpressionMultiNash) exprSub, expr.getCoalitions());
+		}
 		// Anything else is treated as multi-objective 
 		else {
 			return checkExpressionMultiObjective(model, expr, forAll, coalition);
 		}
 	}
+	
+	protected StateValues checkExpressionMultiNash(Model model, ExpressionMultiNash expr, List<Coalition> coalitions) throws PrismException {
+		ModelCheckerResult res = new ModelCheckerResult();
+		StateValues sv = new StateValues();
+		List<ExpressionQuant> formulae = expr.getOperands();
+		List<CSGRewards> rewards = new ArrayList<CSGRewards>();
+		BitSet[] remain = new BitSet[coalitions.size()];
+		BitSet[] targets = new BitSet[coalitions.size()];
+		BitSet bounded  = new BitSet();
+		BitSet unbounded = new BitSet();
+		int[] bounds = new int[coalitions.size()];
+		Expression expr1;
+		IntegerBound bound;
+		Arrays.fill(remain, null);
+		Arrays.fill(targets, null);
+		Arrays.fill(bounds, -1);
+		int e, p, r;
+		boolean type = true;
+		boolean rew = false;
+		boolean min = expr.getRelOp().isMin();
+		
+		/*
+		System.out.println("-- RelOp");
+		System.out.println("isMax " + expr.getRelOp().isMax());
+		System.out.println("isMin " + expr.getRelOp().isMin());
+		System.out.println("isLowerBound " + expr.getRelOp().isLowerBound());
+		System.out.println("isUpperBound " + expr.getRelOp().isUpperBound());
+		System.out.println("isStrict " + expr.getRelOp().isStrict());
+		*/
+		
+		OpRelOpBound opInfo = expr.getRelopBoundInfo(constantValues);		
+		MinMax minMax = opInfo.getMinMax(model.getModelType());
+		
+		/*
+		System.out.println("-- minMax");
+		System.out.println("isMax " + minMax.isMax());
+		System.out.println("isMin " + minMax.isMin());
+		System.out.println("isMin1 " + minMax.isMin1());
+		System.out.println("isMin2 " + minMax.isMin2());
+		*/
+		
+		if (coalitions.size() != formulae.size())
+			throw new PrismException("The number of coalitions and objectives must be equal");
+		
+		for (e = 0; e < formulae.size() -1 ; e++) {
+			type = type && formulae.get(e).getClass() == formulae.get(e+1).getClass();
+		}
+		
+		if (!type)
+			throw new PrismException("Mixing P and R operators is not yet supported");
+		
+		List<ExpressionTemporal> exprs = new ArrayList<ExpressionTemporal>();
+		
+		for (p = 0; p < formulae.size() ; p++) {
+			expr1 = formulae.get(p);
+			if (expr1 instanceof ExpressionMultiNashProb) {
+				expr1 = ((ExpressionMultiNashProb) (expr1)).getExpression();
+				expr1 = Expression.convertSimplePathFormulaToCanonicalForm(expr1);
+				if (expr1 instanceof ExpressionTemporal) {
+		 			ExpressionTemporal exprTemp = (ExpressionTemporal) expr1;
+		 			exprs.add(p, exprTemp);
+					switch (exprTemp.getOperator()) {
+						case ExpressionTemporal.P_X:
+							bounded.set(p);
+							targets[p] = new BitSet();
+							targets[p].set(0, ((CSG) model).getNumStates());
+							bounds[p] = 1;
+							break;
+						case ExpressionTemporal.P_U:
+							if (exprTemp.hasBounds()) {
+								bounded.set(p);
+								bound = IntegerBound.fromExpressionTemporal((ExpressionTemporal) expr1, constantValues, true);
+								if (bound.hasUpperBound()) 
+									bounds[p] = bound.getHighestInteger();
+								else 
+									throw new PrismException("Only upper bounds are allowed");
+							} else {
+								unbounded.set(p);
+							}
+							if (!((ExpressionTemporal) expr1).getOperand1().equals(ExpressionLiteral.True()))
+								remain[p] = checkExpression(model, ((ExpressionTemporal) expr1).getOperand1(), null).getBitSet();
+							break;
+						default:
+							throw new PrismNotSupportedException("The reward operator " + exprTemp.getOperatorSymbol() + " is not yet supported for equilibria-based properties");
+					}
+				}
+				targets[p] = checkExpression(model, ((ExpressionTemporal) expr1).getOperand2(), null).getBitSet();
+			}
+			else if (expr1 instanceof ExpressionMultiNashReward) {			
+				r = ExpressionReward.getRewardStructIndexByIndexObject(((ExpressionMultiNashReward) expr1).getRewardStructIndex(), rewardGen, constantValues);
+				expr1 = ((ExpressionMultiNashReward) (expr1)).getExpression();
+				rewards.add(p, (CSGRewards) constructRewards(model, r));
+				rew = true;
+				ExpressionTemporal exprTemp = (ExpressionTemporal) expr1;
+	 			exprs.add(p, exprTemp);
+				switch (exprTemp.getOperator()) {
+					case ExpressionTemporal.P_F:
+						targets[p] = checkExpression(model, exprTemp.getOperand2(), null).getBitSet();
+						unbounded.set(p);
+						break;
+					case ExpressionTemporal.R_I:
+						bounded.set(p);
+						bounds[p] = exprTemp.getUpperBound().evaluateInt(constantValues);
+						//cumul = false;
+						break;
+					case ExpressionTemporal.R_C:
+						//insta = false;
+						if (exprTemp.hasBounds()) {
+							bounded.set(p);
+							bound = IntegerBound.fromExpressionTemporal((ExpressionTemporal) expr1, constantValues, true);
+							if (bound.hasUpperBound()) 
+								bounds[p] = bound.getHighestInteger();
+							else 
+								throw new PrismException("Only upper bounds are allowed");
+						} else {
+							throw new PrismNotSupportedException("Total rewards " + exprTemp.getOperatorSymbol() + " is not yet supported for equilibria-based properties");
+						}
+						break;
+					default:
+						throw new PrismNotSupportedException("The reward operator " + exprTemp.getOperatorSymbol() + " is not yet supported for equilibria-based properties");
+				}
+			}		
+		}			
+		if (!rew)
+			rewards = null;
+		if (coalitions.size() == 1) {
+			throw new PrismNotSupportedException("Equilibria-based properties require at least two coalitions");	
+		}
+		else if (coalitions.size() == 2) {
+			if (unbounded.cardinality() == formulae.size()) {
+				if (rew) {
+					res = ((CSGModelChecker) this).computeRewReachEquilibria((CSG) model, coalitions, rewards, targets, min);
+				}
+				else {
+					res = ((CSGModelChecker) this).computeProbReachEquilibria((CSG) model, coalitions, targets, remain, min);
+				}
+			}
+			else if (bounded.cardinality() == formulae.size()) {
+				if (rew) {
+					res = ((CSGModelChecker) this).computeRewBoundedEquilibria((CSG) model, coalitions, rewards, exprs, bounds, min);
+				}
+				else {
+					res = ((CSGModelChecker) this).computeProbBoundedEquilibria((CSG) model, coalitions, targets, remain, bounds, min);				
+				}
+			}
+			else {
+				res = ((CSGModelChecker) this).computeMixedEquilibria((CSG) model, coalitions, rewards, exprs, bounded, targets, remain, bounds, min);
+			}
+		}
+		else if (coalitions.size() > 2) {
+			throw new PrismNotSupportedException("Equilibria-based properties with more than two coalitions are not yet supported");	
+			/*
+			if (rew) {
+				res = ((CSGModelChecker) this).computeMultiRewReachEquilibria((CSG) model, coalitions, rewards, targets, min);
+			}
+			else {
+				res = ((CSGModelChecker) this).computeMultiProbReachEquilibria((CSG) model, coalitions, targets, remain, min);
+			}
+			*/
+		}
 
+		result.setStrategy(res.strat);
+		sv =  StateValues.createFromDoubleArray(res.soln, model);
+		
+		// Print out probabilities
+		if (getVerbosity() > 5) {
+			mainLog.print("\nProbabilities (non-zero only) for all states:\n");
+			sv.print(mainLog);
+		}
+		
+		// For =? properties, just return values
+		if (opInfo.isNumeric()) {
+			return sv;
+		}
+		// Otherwise, compare against bound to get set of satisfying states
+		else {
+			BitSet sol = sv.getBitSetFromInterval(opInfo.getRelOp(), opInfo.getBound());
+			sv.clear();
+			return StateValues.createFromBitSet(sol, model);
+		}
+	}
+	
 	/**
 	 * Model check a P operator expression and return the values for the statesOfInterest.
  	 * @param statesOfInterest the states of interest, see checkExpression()
@@ -601,7 +818,6 @@ public class ProbModelChecker extends NonProbModelChecker
 	 */
 	protected StateValues checkExpressionProb(Model model, ExpressionProb expr, boolean forAll, Coalition coalition, BitSet statesOfInterest) throws PrismException
 	{
-
 		// For now, need separate handling of S and C operator for SMGs
 		if (expr.getExpression() instanceof ExpressionReward) {
 			Expression e = ((ExpressionReward) expr.getExpression()).getExpression();
@@ -621,7 +837,7 @@ public class ProbModelChecker extends NonProbModelChecker
 				}
 			}
 		}
-
+		
 		// Get info from P operator
 		OpRelOpBound opInfo = expr.getRelopBoundInfo(constantValues);
 		MinMax minMax = opInfo.getMinMax(model.getModelType(), forAll, coalition);
@@ -684,7 +900,7 @@ public class ProbModelChecker extends NonProbModelChecker
 	{
 		boolean negated = false;
 		StateValues probs = null;
-
+		
 		expr = Expression.convertSimplePathFormulaToCanonicalForm(expr);
 
 		// Negation
@@ -697,7 +913,6 @@ public class ProbModelChecker extends NonProbModelChecker
 
 		if (expr instanceof ExpressionTemporal) {
  			ExpressionTemporal exprTemp = (ExpressionTemporal) expr;
-
 			// Next
 			if (exprTemp.getOperator() == ExpressionTemporal.P_X) {
 				probs = checkProbNext(model, exprTemp, minMax, statesOfInterest);
@@ -738,6 +953,9 @@ public class ProbModelChecker extends NonProbModelChecker
 		case CTMC:
 			res = ((CTMCModelChecker) this).computeNextProbs((CTMC) model, target);
 			break;
+		case CSG:
+			res = ((CSGModelChecker) this).computeNextProbs((CSG) model, target, minMax.isMin1(), minMax.isMin2(), minMax.getCoalition());
+			break;
 		case DTMC:
 			res = ((DTMCModelChecker) this).computeNextProbs((DTMC) model, target);
 			break;
@@ -754,7 +972,7 @@ public class ProbModelChecker extends NonProbModelChecker
 			throw new PrismNotSupportedException("Cannot model check " + expr + " for " + model.getModelType() + "s");
 		}
 		result.setStrategy(res.strat);
-		return StateValues.createFromDoubleArray(res.soln, model);
+		return StateValues.createFromDoubleArrayResult(res, model);
 	}
 
 	/**
@@ -808,18 +1026,20 @@ public class ProbModelChecker extends NonProbModelChecker
 			case SMG:
 				res = ((SMGModelChecker) this).computeUntilProbs((SMG) model, remain, target, minMax.isMin1(), minMax.isMin2(), minMax.getCoalition());
 				break;
+			case CSG:
+				res = ((CSGModelChecker) this).computeUntilProbs((CSG) model, remain, target, minMax.isMin1(), minMax.isMin2(), minMax.getCoalition());
+				break;
 			default:
 				throw new PrismException("Cannot model check " + expr + " for " + model.getModelType() + "s");
 			}
 			result.setStrategy(res.strat);
-			sv = StateValues.createFromDoubleArray(res.soln, model);
+			sv = StateValues.createFromDoubleArrayResult(res, model);
 		} else if (windowSize == 0) {
 			// A trivial case: windowSize=0 (prob is 1 in target states, 0 otherwise)
 			sv = StateValues.createFromBitSetAsDoubles(target, model);
 		} else {
 			// Otherwise: numerical solution
 			ModelCheckerResult res = null;
-
 			switch (model.getModelType()) {
 			case DTMC:
 				res = ((DTMCModelChecker) this).computeBoundedUntilProbs((DTMC) model, remain, target, windowSize);
@@ -833,18 +1053,20 @@ public class ProbModelChecker extends NonProbModelChecker
 			case SMG:
 				res = ((SMGModelChecker) this).computeBoundedUntilProbs((SMG) model, remain, target, windowSize, minMax.isMin1(), minMax.isMin2(), minMax.getCoalition());
 				break;
+			case CSG:
+				res = ((CSGModelChecker) this).computeBoundedUntilProbs((CSG) model, remain, target, windowSize, minMax.isMin1(), minMax.isMin2(), minMax.getCoalition());
+				break;
 			default:
 				throw new PrismNotSupportedException("Cannot model check " + expr + " for " + model.getModelType() + "s");
 			}
 			result.setStrategy(res.strat);
-			sv = StateValues.createFromDoubleArray(res.soln, model);
+			sv = StateValues.createFromDoubleArrayResult(res, model);
 		}
 
 		// perform lowerBound restricted next-step computations to
 		// deal with lower bound.
 		if (lowerBound > 0) {
 			double[] probs = sv.getDoubleArray();
-
 			for (i = 0; i < lowerBound; i++) {
 				switch (model.getModelType()) {
 				case DTMC:
@@ -864,6 +1086,7 @@ public class ProbModelChecker extends NonProbModelChecker
 			}
 
 			sv = StateValues.createFromDoubleArray(probs, model);
+			sv.setAccuracy(AccuracyFactory.boundedNumericalIterations());
 		}
 
 		return sv;
@@ -890,17 +1113,23 @@ public class ProbModelChecker extends NonProbModelChecker
 		case MDP:
 			res = ((MDPModelChecker) this).computeUntilProbs((MDP) model, remain, target, minMax.isMin());
 			break;
+		case POMDP:
+			res = ((POMDPModelChecker) this).computeReachProbs((POMDP) model, target, minMax.isMin());
+			break;
 		case STPG:
 			res = ((STPGModelChecker) this).computeUntilProbs((STPG) model, remain, target, minMax.isMin1(), minMax.isMin2(), minMax.getBound());
 			break;
 		case SMG:
 			res = ((SMGModelChecker) this).computeUntilProbs((SMG) model, remain, target, minMax.isMin1(), minMax.isMin2(), minMax.getCoalition());
 			break;
+		case CSG:
+			res = ((CSGModelChecker) this).computeUntilProbs((CSG) model, remain, target, minMax.isMin1(), minMax.isMin2(), minMax.getCoalition());
+			break;
 		default:
 			throw new PrismNotSupportedException("Cannot model check " + expr + " for " + model.getModelType() + "s");
 		}
 		result.setStrategy(res.strat);
-		return StateValues.createFromDoubleArray(res.soln, model);
+		return StateValues.createFromDoubleArrayResult(res, model);
 	}
 
 	/**
@@ -956,13 +1185,14 @@ public class ProbModelChecker extends NonProbModelChecker
 		}
 
 		// Check if ratio reward
-	        if(expr.getRewardStructDivByIndexObject(modelInfo, constantValues) != null)
-		        throw new PrismException("Ratio rewards not supported with the selected engine and module type.");
+		if (expr.getRewardStructIndexDiv() != null) {
+			throw new PrismException("Ratio rewards not supported with the selected engine and module type.");
+		}
 		OpRelOpBound opInfo = expr.getRelopBoundInfo(constantValues);
 		MinMax minMax = opInfo.getMinMax(model.getModelType(), forAll, coalition);
 
 		// Build rewards
-		int r = expr.getRewardStructIndexByIndexObject(modelInfo, constantValues);
+		int r = expr.getRewardStructIndexByIndexObject(rewardGen, constantValues);
 		mainLog.println("Building reward structure...");
 		Rewards rewards = constructRewards(model, r);
 
@@ -988,78 +1218,29 @@ public class ProbModelChecker extends NonProbModelChecker
 	}
 
 	/**
-	 * Construct rewards for the reward structure with index r of the model generator and a model.
+	 * Construct rewards for the reward structure with index r of the reward generator and a model.
 	 * Ensures non-negative rewards.
 	 * <br>
-	 * Note: Relies on the stored ModelGenerator for constructing the reward structure.
+	 * Note: Relies on the stored RewardGenerator for constructing the reward structure.
 	 */
 	protected Rewards constructRewards(Model model, int r) throws PrismException
 	{
-		return constructRewards(model, r, false);
+		return constructRewards(model, r, model.getModelType() == ModelType.CSG);
 	}
 
 	/**
-	 * Construct rewards for the reward structure with index r of the model generator and a model.
+	 * Construct rewards for the reward structure with index r of the reward generator and a model.
 	 * <br>
 	 * If {@code allowNegativeRewards} is true, the rewards may be positive and negative, i.e., weights.
 	 * <br>
-	 * Note: Relies on the stored ModelGenerator for constructing the reward structure.
+	 * Note: Relies on the stored RewardGenerator for constructing the reward structure.
 	 */
 	protected Rewards constructRewards(Model model, int r, boolean allowNegativeRewards) throws PrismException
 	{
-		ConstructRewards constructRewards = new ConstructRewards(mainLog);
+		ConstructRewards constructRewards = new ConstructRewards(this);
 		if (allowNegativeRewards)
 			constructRewards.allowNegativeRewards();
-		return constructRewards.buildRewardStructure(model, modelGen, r);
-	}
-
-	/**
-	 * Construct rewards from a (non-negative) reward structure and a model.
-	 * <br>
-	 * Note: Deprecated, use the methods with reward structure index r instead
-	 * to allow construction from model generators.
-	 */
-	@Deprecated
-	protected Rewards constructRewards(Model model, RewardStruct rewStruct) throws PrismException
-	{
-		return constructRewards(model, rewStruct, false);
-	}
-
-	/**
-	 * Construct rewards from a reward structure and a model.
-	 * <br>
-	 * If {@code allowNegativeRewards} is true, the rewards may be positive and negative, i.e., weights.
-	 * <br>
-	 * Note: Deprecated, use the methods with reward structure index r instead
-	 * to allow construction from model generators.
-	 */
-	@Deprecated
-	protected Rewards constructRewards(Model model, RewardStruct rewStruct, boolean allowNegativeRewards) throws PrismException
-	{
-		Rewards rewards;
-		ConstructRewards constructRewards = new ConstructRewards(mainLog, modulesFile);
-
-		if (allowNegativeRewards)
-			constructRewards.allowNegativeRewards();
-
-		switch (model.getModelType()) {
-		case CTMC:
-		case DTMC:
-			rewards = constructRewards.buildMCRewardStructure((DTMC) model, rewStruct, constantValues);
-			break;
-		case MDP:
-			rewards = constructRewards.buildMDPRewardStructure((MDP) model, rewStruct, constantValues);
-			break;
-		case STPG:
-			rewards = constructRewards.buildSTPGRewardStructure((STPG) model, rewStruct, constantValues);
-			break;
-		case SMG:
-			rewards = constructRewards.buildSMGRewardStructure((SMG) model, rewStruct, constantValues);
-			break;
-		default:
-			throw new PrismNotSupportedException("Cannot build rewards for " + model.getModelType() + "s");
-		}
-		return rewards;
+		return constructRewards.buildRewardStructure(model, rewardGen, r);
 	}
 
 	/**
@@ -1085,6 +1266,9 @@ public class ProbModelChecker extends NonProbModelChecker
 				} else {
 					rewards = checkRewardTotal(model, modelRewards, exprTemp, minMax);
 				}
+				break;
+			case ExpressionTemporal.R_S:
+				rewards = checkRewardSteady(model, modelRewards);
 				break;
 			default:
 				throw new PrismNotSupportedException("Explicit engine does not yet handle the " + exprTemp.getOperatorSymbol() + " reward operator");
@@ -1122,12 +1306,17 @@ public class ProbModelChecker extends NonProbModelChecker
 			res = ((MDPModelChecker) this).computeInstantaneousRewards((MDP) model, (MDPRewards) modelRewards, k, minMax.isMin());
 			break;
 		}
+		case CSG: {
+			int k = expr.getUpperBound().evaluateInt(constantValues);
+			res = ((CSGModelChecker) this).computeInstantaneousRewards((CSG) model, (CSGRewards) modelRewards, minMax.coalition, k, minMax.isMin1(), minMax.isMin2());
+			break;
+		}
 		default:
 			throw new PrismNotSupportedException("Explicit engine does not yet handle the " + expr.getOperatorSymbol() + " reward operator for " + model.getModelType()
 					+ "s");
 		}
 		result.setStrategy(res.strat);
-		return StateValues.createFromDoubleArray(res.soln, model);
+		return StateValues.createFromDoubleArrayResult(res, model);
 	}
 
 	/**
@@ -1159,7 +1348,9 @@ public class ProbModelChecker extends NonProbModelChecker
 		// Compute/return the rewards
 		// A trivial case: "C<=0" (prob is 1 in target states, 0 otherwise)
 		if (timeInt == 0 || timeDouble == 0) {
-			return new StateValues(TypeDouble.getInstance(), model.getNumStates(), new Double(0));
+			StateValues res = new StateValues(TypeDouble.getInstance(), model.getNumStates(), 0.0);
+			res.setAccuracy(AccuracyFactory.doublesFromQualitative());
+			return res;
 		}
 		// Otherwise: numerical solution
 		ModelCheckerResult res = null;
@@ -1173,12 +1364,15 @@ public class ProbModelChecker extends NonProbModelChecker
 		case MDP:
 			res = ((MDPModelChecker) this).computeCumulativeRewards((MDP) model, (MDPRewards) modelRewards, timeInt, minMax.isMin());
 			break;
+		case CSG:
+			res = ((CSGModelChecker) this).computeCumulativeRewards((CSG) model, (CSGRewards) modelRewards, minMax.getCoalition(), timeInt, minMax.isMin1(), minMax.isMin2(), false);
+			break;
 		default:
 			throw new PrismNotSupportedException("Explicit engine does not yet handle the " + expr.getOperatorSymbol() + " reward operator for " + model.getModelType()
 					+ "s");
 		}
 		result.setStrategy(res.strat);
-		return StateValues.createFromDoubleArray(res.soln, model);
+		return StateValues.createFromDoubleArrayResult(res, model);
 	}
 
 	/**
@@ -1203,12 +1397,36 @@ public class ProbModelChecker extends NonProbModelChecker
 		case MDP:
 			res = ((MDPModelChecker) this).computeTotalRewards((MDP) model, (MDPRewards) modelRewards, minMax.isMin());
 			break;
+		case CSG:
+			res = ((CSGModelChecker) this).computeTotalRewards((CSG) model, (CSGRewards) modelRewards, minMax.isMin1(), minMax.isMin2(), minMax.getCoalition());
+			break;
 		default:
 			throw new PrismNotSupportedException("Explicit engine does not yet handle the " + expr.getOperatorSymbol() + " reward operator for " + model.getModelType()
 					+ "s");
 		}
+		//result.setStrategy(res.strat);
+		return StateValues.createFromDoubleArrayResult(res, model);
+	}
+
+	/**
+	 * Compute expected rewards for a steady-state reward operator.
+	 */
+	protected StateValues checkRewardSteady(Model model, Rewards modelRewards) throws PrismException
+	{
+		// Compute/return the rewards
+		ModelCheckerResult res = null;
+		switch (model.getModelType()) {
+		case DTMC:
+			res = ((DTMCModelChecker) this).computeSteadyStateRewards((DTMC) model, (MCRewards) modelRewards);
+			break;
+		case CTMC:
+			res = ((CTMCModelChecker) this).computeSteadyStateRewards((CTMC) model, (MCRewards) modelRewards);
+			break;
+		default:
+			throw new PrismNotSupportedException("Explicit engine does not yet handle the steady-state reward operator for " + model.getModelType() + "s");
+		}
 		result.setStrategy(res.strat);
-		return StateValues.createFromDoubleArray(res.soln, model);
+		return StateValues.createFromDoubleArrayResult(res, model);
 	}
 
 	/**
@@ -1232,7 +1450,7 @@ public class ProbModelChecker extends NonProbModelChecker
 	{
 		// Non-game models don't yet support other variants of R[F]
 		if (expr.getOperator() != ExpressionTemporal.P_F) {
-			if (!(model.getModelType() == ModelType.STPG || model.getModelType() == ModelType.SMG)) {
+			if (!(model.getModelType() == ModelType.STPG || model.getModelType() == ModelType.SMG || model.getModelType() == ModelType.CSG)) {
 				throw new PrismException("The " + expr.getOperatorSymbol() + " reward operator only works for game models");
 			}
 		}
@@ -1257,6 +1475,9 @@ public class ProbModelChecker extends NonProbModelChecker
 		case MDP:
 			res = ((MDPModelChecker) this).computeReachRewards((MDP) model, (MDPRewards) modelRewards, target, minMax.isMin());
 			break;
+		case POMDP:
+			res = ((POMDPModelChecker) this).computeReachRewards((POMDP) model, (MDPRewards) modelRewards, target, minMax.isMin());
+			break;
 		case STPG:
 			res = ((STPGModelChecker) this).computeReachRewards((STPG) model, (STPGRewards) modelRewards, target, minMax.isMin1(), minMax.isMin2());
 			break;
@@ -1273,12 +1494,22 @@ public class ProbModelChecker extends NonProbModelChecker
 				break;
 			}
 			break;
+		case CSG:
+			switch (expr.getOperator()) {
+			case ExpressionTemporal.P_F:
+				res = ((CSGModelChecker) this).computeReachRewards((CSG) model, (CSGRewards) modelRewards, target, CSGModelChecker.R_INFINITY, minMax.isMin1(), minMax.isMin2(), minMax.getCoalition());
+				break;
+			case ExpressionTemporal.R_Fc:
+				res = ((CSGModelChecker) this).computeReachRewards((CSG) model, (CSGRewards) modelRewards, target, CSGModelChecker.R_CUMULATIVE, minMax.isMin1(), minMax.isMin2(), minMax.getCoalition());
+				break;
+			}
+			break;
 		default:
 			throw new PrismNotSupportedException("Explicit engine does not yet handle the " + expr.getOperatorSymbol() + " reward operator for " + model.getModelType()
 					+ "s");
 		}
 		result.setStrategy(res.strat);
-		return StateValues.createFromDoubleArray(res.soln, model);
+		return StateValues.createFromDoubleArrayResult(res, model);
 	}
 
 	/**
@@ -1329,16 +1560,14 @@ public class ProbModelChecker extends NonProbModelChecker
 		BitSet b = checkExpression(model, expr, null).getBitSet();
 
 		// Compute/return the probabilities
-		ModelCheckerResult res = null;
 		switch (model.getModelType()) {
 		case DTMC:
-			double multProbs[] = Utils.bitsetToDoubleArray(b, model.getNumStates());
-			res = ((DTMCModelChecker) this).computeSteadyStateBackwardsProbs((DTMC) model, multProbs);
-			break;
-		default: 
-		    throw new PrismNotSupportedException("Explicit engine does not yet handle the S operator for " + model.getModelType() + "s");
+			return ((DTMCModelChecker) this).computeSteadyStateFormula((DTMC) model, b);
+		case CTMC:
+			return ((CTMCModelChecker) this).computeSteadyStateFormula((CTMC) model, b);
+		default:
+			throw new PrismNotSupportedException("Explicit engine does not yet handle the S operator for " + model.getModelType() + "s");
 		}
-		return StateValues.createFromDoubleArray(res.soln, model);
 	}
 
 	protected StateValues checkExpressionMultiObjective(Model model, ExpressionStrategy expr, boolean forAll, Coalition coalition) throws PrismException
@@ -1416,8 +1645,6 @@ public class ProbModelChecker extends NonProbModelChecker
 		switch (((ExpressionFunc) expr).getNameCode()) {
 		case ExpressionFunc.MULTI:
 			throw new PrismException("Properties with \"multi\" no longer supported.");
-		case ExpressionFunc.COMP:
-			throw new PrismException("Cannot evaluate \"comp\" property on an atomic model.");
 		default:
 			throw new PrismException("Unsupported format for multi-objective query");
 		}
@@ -1431,8 +1658,6 @@ public class ProbModelChecker extends NonProbModelChecker
 		switch (expr.getNameCode()) {
 		case ExpressionFunc.MULTI:
 			throw new PrismException("Properties with \"multi\" not supported.");
-		case ExpressionFunc.COMP:
-			throw new PrismException("Cannot evaluate \"comp\" property on an atomic model.");
 		default:
 			return super.checkExpressionFunc(model, expr, statesOfInterest);
 		}
@@ -1510,6 +1735,10 @@ public class ProbModelChecker extends NonProbModelChecker
 	{
 		int numStates = model.getNumStates();
 		int nonZeroRews = 0;
+
+		if (exportType != Prism.EXPORT_PLAIN) {
+			throw new PrismNotSupportedException("Exporting state rewards in the requested format is currently not supported by the explicit engine");
+		}
 
 		Rewards modelRewards = constructRewards(model, r);
 		switch (model.getModelType()) {

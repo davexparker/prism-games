@@ -2,7 +2,7 @@
 //	
 //	Copyright (c) 2002-
 //	Authors:
-//	* Dave Parker <david.parker@comlab.ox.ac.uk> (University of Oxford)
+//	* Dave Parker <d.a.parker@cs.bham.ac.uk> (University of Birmingham)
 //	
 //------------------------------------------------------------------------------
 //	
@@ -29,10 +29,14 @@ package simulator;
 import java.io.File;
 import java.text.NumberFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 
+import explicit.Distribution;
 import parser.State;
 import parser.Values;
 import parser.VarList;
@@ -42,9 +46,9 @@ import parser.ast.ExpressionProb;
 import parser.ast.ExpressionReward;
 import parser.ast.ExpressionTemporal;
 import parser.ast.LabelList;
-import parser.ast.ModulesFile;
 import parser.ast.PropertiesFile;
 import parser.type.Type;
+import prism.ModelGenerator;
 import prism.ModelType;
 import prism.Prism;
 import prism.PrismComponent;
@@ -52,40 +56,42 @@ import prism.PrismException;
 import prism.PrismFileLog;
 import prism.PrismLangException;
 import prism.PrismLog;
+import prism.PrismNotSupportedException;
 import prism.PrismUtils;
+import prism.Result;
 import prism.ResultsCollection;
+import prism.RewardGenerator;
 import prism.UndefinedConstants;
 import simulator.method.SimulationMethod;
 import simulator.sampler.Sampler;
 import strat.InvalidStrategyStateException;
 import strat.StochasticUpdateStrategy;
-import strat.StochasticUpdateStrategyProduct;
 import strat.Strategy;
 import userinterface.graph.Graph;
-import explicit.Distribution;
-import explicit.MDP;
-import explicit.MDPSimple;
-import explicit.SMG;
-import explicit.STPG;
-import explicit.rewards.ConstructRewards;
-import explicit.rewards.Rewards;
 
 /**
- * A discrete event simulation engine for PRISM models.
+ * A discrete event simulation engine.
  * 
  * The SimulatorEngine class provides support for:
  * <UL>
- * <LI> State/model exploration
- * <LI> Manual/random path generation
- * <LI> Monte-Carlo sampling techniques for approximate property verification
+ * <LI> Manual/random generation of paths through a model
+ * <LI> Statistical model checking via Monte-Carlo sampling techniques
  * </UL>
  * 
- * After creating a SimulatorEngine object, you can build paths or explore models using:
+ * After creating a SimulatorEngine object, you load a model with the methods:
+ * <UL>
+ * <LI> {@link #loadModel}
+ * </UL>
+ * The input to these methods is a model (ModelGenerator),
+ * in which all constants have already been defined,
+ * and a RewardGenerator for its reward definitions.
+ * The latter can be omitted if not needed.
+ * 
+ * You can initialise creation of a path with:
  * <UL>
  * <LI> {@link #createNewPath} if you want to create a path that will be stored in full
- * <LI> {@link #createNewOnTheFlyPath} if just want to do e.g. model exploration
+ * <LI> {@link #createNewOnTheFlyPath} if you don't need the full path
  * </UL>
- * The input to these methods is a model (ModulesFile) in which all constants have already been defined.
  * 
  * At this point, you can also load labels and properties into the simulator, whose values
  * will be available during path generation. Use:
@@ -99,7 +105,7 @@ import explicit.rewards.Rewards;
  * <LI> {@link #initialisePath}
  * </UL>
  * 
- * For sampling-based approximate model checking, use:
+ * For statistical model checking, instead of path creation, use:
  * <UL>
  * <LI> {@link #isPropertyOKForSimulation}
  * <LI> {@link #checkPropertyForSimulation}
@@ -111,11 +117,9 @@ import explicit.rewards.Rewards;
 public class SimulatorEngine extends PrismComponent
 {
 	// The current parsed model + info
-	private ModulesFile modulesFile;
+	private ModelGenerator modelGen;
+	private RewardGenerator rewardGen;
 	private ModelType modelType;
-	// for explicit simulation
-	private explicit.Model model;
-	private List<Rewards> rewards;
 	// Variable info
 	private VarList varList;
 	private int numVars;
@@ -134,19 +138,18 @@ public class SimulatorEngine extends PrismComponent
 	// as path.getCurrentState(); we maintain it separately for efficiency,
 	// i.e. to avoid creating new State objects at every step)
 	protected State currentState;
-	// List of currently available transitions
-	protected TransitionList transitionList;
-	// Has the transition list been built? 
-	protected boolean transitionListBuilt;
+	
 	// State for which transition list applies
 	// (if null, just the default - i.e. the last state in the current path)
 	protected State transitionListState;
+	
+	/** The probability with which a strategy picks each choice (optional) **/
+	private double strategyProbabilities[] = null;
+	
 	// Temporary storage for manipulating states/rewards
 	protected double tmpStateRewards[];
 	protected double tmpTransitionRewards[];
 
-	// Updater object for model
-	protected Updater updater;
 	// Random number generator
 	private RandomNumberGenerator rng;
 
@@ -157,9 +160,20 @@ public class SimulatorEngine extends PrismComponent
 
 	// TODO: remove this (not in trunk any more)
 	private Prism prism;
+	
+	/**
+	 * Utility class to store a reference to a transition,
+	 * broken up into the index of its (nondetermnistic) choice {@code i}
+	 * and the index {@code offset} within transitions of the choice.
+	 */
+	public class Ref
+	{
+		public int i;
+		public int offset;
+	}
 
 	// ------------------------------------------------------------------------------
-	// Basic setup
+	// Basic setup + model loading
 	// ------------------------------------------------------------------------------
 
 	/**
@@ -169,9 +183,7 @@ public class SimulatorEngine extends PrismComponent
 	{
 		super(parent);
 		this.prism = prism;
-		model = null;
-		rewards = null;
-		modulesFile = null;
+		modelGen = null;
 		modelType = null;
 		varList = null;
 		numVars = 0;
@@ -182,101 +194,111 @@ public class SimulatorEngine extends PrismComponent
 		path = null;
 		onTheFly = true;
 		currentState = null;
-		transitionList = null;
-		transitionListBuilt = false;
 		transitionListState = null;
 		tmpStateRewards = null;
 		tmpTransitionRewards = null;
-		updater = null;
 		rng = new RandomNumberGenerator();
 		strategy = null;
 	}
 
+	/**
+	 * Loads a new model (and its rewards) into the simulator.
+	 * Note: All constants in the model must have already been defined.
+	 * @param modelGen The model generator for simulation
+	 * @param rewardGen Reward generator for simulation (null if not needed)
+	 */
+	public void loadModel(ModelGenerator modelGen, RewardGenerator rewardGen) throws PrismException
+	{
+		// Create an empty RewardGenerator if missing
+		if (rewardGen == null) {
+			rewardGen = new RewardGenerator() {} ;
+		}
+		
+		// Store model, some info and constants
+		this.modelGen = modelGen;
+		this.rewardGen = rewardGen;
+		modelType = modelGen.getModelType();
+		mfConstants = modelGen.getConstantValues();
+
+		// Get variable list (symbol table) for model 
+		varList = modelGen.createVarList();
+		numVars = varList.getNumVars();
+		
+		// Initialise storage (should be re-done for each new path etc. but doesn't hurt)
+		initialise();
+	}
+
+	/**
+	 * Loads a new model (without any rewards) into the simulator.
+	 * Note: All constants in the model must have already been defined.
+	 * Typically, {@link #loadModel(ModelGenerator, RewardGenerator) is used.
+	 * @param modelGen The model generator for simulation
+	 */
+	public void loadModel(ModelGenerator modelGen) throws PrismException
+	{
+		loadModel(modelGen, null);
+	}
+	
+	/**
+	 * Initialise: Set up (or reset) variables for simulation.
+	 */
+	private void initialise() throws PrismException
+	{
+		// Create state/transition/rewards storage
+		currentState = new State(numVars);
+		tmpStateRewards = new double[rewardGen.getNumRewardStructs()];
+		tmpTransitionRewards = new double[rewardGen.getNumRewardStructs()];
+
+		// Clear storage for strategy
+		strategy = null;
+
+		// Create storage for labels/properties
+		labels = new ArrayList<Expression>();
+		properties = new ArrayList<Expression>();
+		propertySamplers = new ArrayList<Sampler>();
+	}
+
+	/**
+	 * Get access to the currently loaded model
+	 */
+	public ModelGenerator getModel()
+	{
+		return modelGen;
+	}
+	
+	/**
+	 * Get access to the currently loaded reward generator
+	 */
+	public RewardGenerator getRewardGenerator()
+	{
+		return rewardGen;
+	}
+	
 	// ------------------------------------------------------------------------------
 	// Path creation and modification
 	// ------------------------------------------------------------------------------
 
 	/**
-	 * Check whether a model is suitable for exploration/analysis using the simulator.
-	 * If not, an explanatory error message is thrown as an exception.
+	 * Create a new path for the current model.
 	 */
-	public void checkModelForSimulation(ModulesFile modulesFile) throws PrismException
+	public void createNewPath() throws PrismException
 	{
-		// No support for PTAs yet
-		if (modulesFile.getModelType() == ModelType.PTA) {
-			throw new PrismException("Sorry - the simulator does not currently support PTAs");
-		}
-		// No support for system...endsystem yet
-		if (modulesFile.getSystemDefn() != null) {
-			throw new PrismException("Sorry - the simulator does not currently handle the system...endsystem construct");
-		}
-	}
-
-	public void checkModelForSimulation(explicit.Model model) throws PrismException
-	{
-		if (!(model instanceof MDPSimple)) {
-			throw new PrismException("The explicit model simulator only supports explicit probabilistic models");
-		}
-		// No support for PTAs yet
-		if (modulesFile.getModelType() == ModelType.PTA) {
-			throw new PrismException("Sorry - the explicit simulator does not currently support PTAs");
-		}
-	}
-
-	/**
-	 * Create a new path for a model.
-	 * Note: All constants in the model must have already been defined.
-	 * @param modulesFile Model for simulation
-	 */
-	public void createNewPath(ModulesFile modulesFile) throws PrismException
-	{
-		// Store model
-		model = null;
-		loadModulesFile(modulesFile);
+		// Reset simulation variables
+		initialise();
 		// Create empty (full) path object associated with this model
-		path = new PathFull(modulesFile);
-		onTheFly = false;
-	}
-
-	public void createNewPath(ModulesFile modulesFile, explicit.Model model) throws PrismException
-	{
-		if (model == null) {
-			createNewPath(modulesFile);
-			return;
-		}
-
-		// Store model
-		loadModelExplicit(modulesFile, model);
-		// Create empty (full) path object associated with this model
-		path = new PathFull(modulesFile, model);
+		path = new PathFull(modelGen, rewardGen);
 		onTheFly = false;
 	}
 
 	/**
-	 * Create a new on-the-fly path for a model.
-	 * Note: All constants in the model must have already been defined.
-	 * @param modulesFile Model for simulation
+	 * Create a new on-the-fly path for the current model.
 	 */
-	public void createNewOnTheFlyPath(ModulesFile modulesFile) throws PrismException
+	public void createNewOnTheFlyPath() throws PrismException
 	{
-		// Store model
-		model = null;
-		loadModulesFile(modulesFile);
+		// Reset simulation variables
+		initialise();
 		// Create empty (on-the-fly_ path object associated with this model
-		path = new PathOnTheFly(modulesFile);
-		onTheFly = true;
-	}
-
-	public void createNewOnTheFlyPath(ModulesFile modulesFile, explicit.Model model) throws PrismException
-	{
-		if (model == null) {
-			createNewOnTheFlyPath(modulesFile);
-			return;
-		}
-		// Store model
-		loadModelExplicit(modulesFile, model);
-		// Create empty (on-the-fly_ path object associated with this model
-		path = new PathOnTheFly(modulesFile, model);
+		path = new PathOnTheFly(modelGen, rewardGen);
 		onTheFly = true;
 	}
 
@@ -288,33 +310,18 @@ public class SimulatorEngine extends PrismComponent
 	{
 		// Store passed in state as current state
 		if (initialState != null) {
-			if (model == null) { // implicit simulation
-				currentState.copy(initialState);
-				updater.calculateStateRewards(currentState, tmpStateRewards);
-			} else { // explicit simulation
-				currentState = initialState;
-			}
+			currentState.copy(initialState);
 		}
 		// Or pick default/random one
 		else {
-			if (model == null) { // implicit simulation
-				if (modulesFile.getInitialStates() == null) {
-					currentState.copy(modulesFile.getDefaultInitialState());
-				} else {
-					throw new PrismException("Random choice of multiple initial states not yet supported");
-				}
-				updater.calculateStateRewards(currentState, tmpStateRewards);
-			} else { // explicit simulation
-				if (model.getNumInitialStates() == 1) {
-					currentState = states.get(model.getFirstInitialState());
-				} else if (model.getInitialStates() == null) {
-					throw new PrismException("No initial state provided");
-				} else {
-					throw new PrismException("Random choice of multiple initial states not yet supported");
-				}
+			if (modelGen.hasSingleInitialState()) {
+				currentState.copy(modelGen.getInitialState());
+			} else {
+				throw new PrismNotSupportedException("Random choice of multiple initial states not yet supported");
 			}
 		}
-
+		// Get initial state reward
+		calculateStateRewards(currentState, tmpStateRewards);
 		// Initialise stored path
 		path.initialise(currentState, tmpStateRewards);
 		strategy = prism.getStrategy();
@@ -322,24 +329,17 @@ public class SimulatorEngine extends PrismComponent
 		if (strategy != null) {
 			// initialising the strategy
 			try {
-				if (model == null) { // implicit
-					if (stateIds == null || stateIds.isEmpty())
-						this.setStrategy(strategy);
-					strategy.init(stateIds.get(currentState));
-				} else { // explicit
+				if (stateIds == null || stateIds.isEmpty())
 					this.setStrategy(strategy);
-					strategy.init(indexOf(states, currentState));
-				}
+				strategy.init(stateIds.get(currentState));
 			} catch (InvalidStrategyStateException error) {
 				// TODO Auto-generated catch block
 				error.printStackTrace();
 			}
 			path.setStrategyMemoryForCurrentState(strategy.getCurrentMemoryElement());
 		}
-
-		// Reset transition list
-		transitionListBuilt = false;
-		transitionListState = null;
+		// Explore initial state in model generator
+		computeTransitionsForState(currentState, path.getStrategyMemoryForCurrentState());
 		// Reset and then update samplers for any loaded properties
 		resetSamplers();
 		updateSamplers();
@@ -352,11 +352,10 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public void manualTransition(int index) throws PrismException
 	{
-		TransitionList transitions = getTransitionList();
-		int i = transitions.getChoiceIndexOfTransition(index);
-		int offset = transitions.getChoiceOffsetOfTransition(index);
+		int i = modelGen.getChoiceIndexOfTransition(index);
+		int offset = modelGen.getChoiceOffsetOfTransition(index);
 		if (modelType.continuousTime()) {
-			double r = transitions.getProbabilitySum();
+			double r = modelGen.getProbabilitySum();
 			executeTimedTransition(i, offset, rng.randomExpDouble(r), index);
 		} else {
 			executeTransition(i, offset, index);
@@ -371,9 +370,8 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public void manualTransition(int index, double time) throws PrismException
 	{
-		TransitionList transitions = getTransitionList();
-		int i = transitions.getChoiceIndexOfTransition(index);
-		int offset = transitions.getChoiceOffsetOfTransition(index);
+		int i = modelGen.getChoiceIndexOfTransition(index);
+		int offset = modelGen.getChoiceOffsetOfTransition(index);
 		executeTimedTransition(i, offset, time, index);
 	}
 
@@ -385,35 +383,33 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public boolean automaticTransition() throws PrismException
 	{
-		Choice choice;
-		int numChoices, i, j;
-		double d, r;
 
-		TransitionList transitions = getTransitionList();
 		// Check for deadlock; if so, stop and return false
-		numChoices = transitions.getNumChoices();
-		if (numChoices == 0)
+		if (modelGen.getNumChoices() == 0)
 			return false;
-		//throw new PrismException("Deadlock found at state " + path.getCurrentState().toString(modulesFile));
+		//throw new PrismException("Deadlock found at state " + path.getCurrentState().toString(modelGen));
 
-		TransitionList.Ref ref;
+		Ref ref;
+		double d, r;
+		int i, j;
 		switch (modelType) {
 		case DTMC:
 			// Pick a random number to determine choice/transition
 			d = rng.randomUnifDouble();
-			ref = transitions.new Ref();
-			transitions.getChoiceIndexByProbabilitySum(d, ref);
+			ref = new Ref();
+			getChoiceIndexByProbabilitySum(d, ref);
 			// Execute
 			executeTransition(ref.i, ref.offset, -1);
 			break;
 		case MDP:
 		case STPG:
 		case SMG:
+		case CSG:
 			if (strategy == null) {
 				// Resolve nondeterminism randomly
-				i = rng.randomUnifInt(numChoices);
+				i = rng.randomUnifInt(modelGen.getNumChoices());
 			} else {
-				if ((modulesFile.getModelType() == ModelType.STPG || modulesFile.getModelType() == ModelType.SMG) && getPlayerNumber(0) == 1) {
+				if ((modelType == ModelType.STPG || modelType == ModelType.SMG) && modelGen.getPlayerOwningState() == 0) {
 					// Pick a random choice as specified by the player 1 strategy
 					try {
 						Distribution next = strategy.getNextMove(getStateIndex(currentState));
@@ -423,29 +419,80 @@ public class SimulatorEngine extends PrismComponent
 					}
 				} else {
 					// Pick a random choice
-					i = rng.randomUnifInt(numChoices);
+					i = rng.randomUnifInt(modelGen.getNumChoices());
 				}
 			}
-			choice = transitions.getChoice(i);
 			// Pick a random transition from this choice
 			d = rng.randomUnifDouble();
-			j = choice.getIndexByProbabilitySum(d);
+			j = getTransitionIndexByProbabilitySum(i, d);
 			// Execute
 			executeTransition(i, j, -1);
 			break;
 		case CTMC:
 			// Get sum of all rates
-			r = transitions.getProbabilitySum();
+			r = modelGen.getProbabilitySum();
 			// Pick a random number to determine choice/transition
 			d = rng.randomUnifDouble(r);
-			ref = transitions.new Ref();
-			transitions.getChoiceIndexByProbabilitySum(d, ref);
+			ref = new Ref();
+			getChoiceIndexByProbabilitySum(d, ref);
 			// Execute
 			executeTimedTransition(ref.i, ref.offset, rng.randomExpDouble(r), -1);
 			break;
+		case LTS:
+			// Pick a random choice
+			i = rng.randomUnifInt(modelGen.getNumChoices());
+			// Execute
+			executeTransition(i, 0, -1);
+			break;
+		default:
+			throw new PrismNotSupportedException(modelType + " not supported");
 		}
 
 		return true;
+	}
+
+	/**
+	 * Get a reference to a transition according to a total probability (or rate) sum, x.
+	 * i.e.the first transition for which the sum of probabilities/rates of that and all prior
+	 * transitions (across all choices) exceeds x.
+	 * @param x Probability (or rate) sum
+	 * @param ref Empty transition reference to store result
+	 */
+	private void getChoiceIndexByProbabilitySum(double x, Ref ref) throws PrismException
+	{
+		int numChoices = modelGen.getNumChoices();
+		double d = 0.0, tot = 0.0;
+		int i = 0;
+		// Add up choice prob/rate sums to find choice
+		for (i = 0; x >= tot && i < numChoices; i++) {
+			d = modelGen.getChoiceProbabilitySum(i);
+			tot += d;
+		}
+		ref.i = i - 1;
+		// Pick transition within choice
+		ref.offset = getTransitionIndexByProbabilitySum(i - 1, x - (tot - d));
+	}
+
+	/**
+	 * Get the index of a transition (within a choice) according to a probability (or rate) sum, x.
+	 * i.e. the first transition for which the sum of probabilities/rates of that and all prior
+	 * transitions (across all choices) exceeds x.
+	 * @param i Index of the choice
+	 * @param x Probability (or rate) sum
+	 */
+	private int getTransitionIndexByProbabilitySum(int i, double x) throws PrismException
+	{
+		int numTransitions = modelGen.getNumTransitions(i);
+		if (numTransitions > 1) {
+			double tot = 0.0;
+			int offset = 0;
+			for (offset = 0; x >= tot && offset < numTransitions; offset++) {
+				tot += modelGen.getTransitionProbability(i, offset);
+			}
+			return offset - 1;
+		} else {
+			return 0;
+		}
 	}
 
 	/**
@@ -509,14 +556,9 @@ public class SimulatorEngine extends PrismComponent
 		// Back track in path
 		((PathFull) path).backtrack(step);
 		// Update current state
-		if (model == null) { // implicit
-			currentState.copy(path.getCurrentState());
-		} else { // explicit
-			currentState = path.getCurrentState();
-		}
-		// Reset transition list 
-		transitionListBuilt = false;
-		transitionListState = null;
+		currentState.copy(path.getCurrentState());
+		// Re-explore current state in model generator
+		computeTransitionsForState(currentState, path.getStrategyMemoryForCurrentState());
 		// Recompute samplers for any loaded properties
 		recomputeSamplers();
 	}
@@ -598,21 +640,15 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	private void computeTransitionsForState(State state, Object stratMem) throws PrismException
 	{
-		if (model == null) { // implicit
-			updater.calculateTransitions(state, transitionList);
-			transitionListState = new State(state);
-		} else { // explicit
-			transitionList = buildExplicitTransitionList(state);
-			transitionListState = state;
-		}
-		transitionListBuilt = true;
+		modelGen.exploreState(state);
+		transitionListState = state;
 		// If there is a strategy loaded, stored probabilities assigned to choices
 		if (strategy != null) {
 			// For games, we just show player 1
-			if (!modelType.multiplePlayers() || getPlayerNumber(0) == 1) {
+			if (!modelType.multiplePlayers() || modelGen.getPlayerOwningState() == 0) {
 				try {
 					strategy.setMemory(stratMem);
-					transitionList.addStrategyProbabilities(strategy.getNextMove(getStateIndex(state)));
+					addStrategyProbabilities(strategy.getNextMove(getStateIndex(state)));
 				} catch (InvalidStrategyStateException e) {
 					// Don't add info if there is a problem with the strategy
 				}
@@ -620,63 +656,58 @@ public class SimulatorEngine extends PrismComponent
 		}
 	}
 
-	private TransitionList buildExplicitTransitionList(State state) throws PrismException
-	{
-		TransitionList tl = new TransitionList();
-		for (int i = 0; i < ((MDP) model).getNumChoices(indexOf(states, state)); i++) {
-			Choice ch = new ChoiceExplicit(modulesFile, ((MDP) model), indexOf(states, state), i);
-			tl.add(ch);
-		}
-		return tl;
-	}
-
 	/**
-	 * Construct a path through a model to match a supplied path,
+	 * Add probabilities assigned to choices by a strategy. 
+	 */
+	private void addStrategyProbabilities(Distribution strategyDistribution) throws PrismException
+	{
+		// Extract choice probabilities from distribution into an array
+		strategyProbabilities = new double[getNumChoices()];
+		Arrays.fill(strategyProbabilities, 0.0);
+		Iterator<Entry<Integer, Double>> it = strategyDistribution.iterator();
+		while (it.hasNext()) {
+			Entry<Integer, Double> entry = it.next();
+			strategyProbabilities[entry.getKey()] += entry.getValue();
+		}
+	}
+	
+	/**
+	 * Construct a path through the currently loaded model to match a supplied path,
 	 * specified as a PathFullInfo object.
-	 * Note: All constants in the model must have already been defined.
-	 * @param modulesFile Model for simulation
 	 * @param newPath Path to match
 	 */
-	public void loadPath(ModulesFile modulesFile, PathFullInfo newPath) throws PrismException
+	public void loadPath(PathFullInfo newPath) throws PrismException
 	{
-		loadPath(modulesFile, null, newPath);
-	}
-
-	public void loadPath(ModulesFile modulesFile, explicit.Model model, PathFullInfo newPath) throws PrismException
-	{
-		int i, j, numSteps, numTrans;
-		boolean found;
-		State state, nextState;
-		if (model == null) // implicit simulation
-			createNewPath(modulesFile);
-		else
-			// explicit simulation
-			createNewPath(modulesFile, model);
 		long numStepsLong = newPath.size();
 		if (numStepsLong > Integer.MAX_VALUE)
 			throw new PrismException("PathFull cannot deal with paths over length " + Integer.MAX_VALUE);
-		numSteps = (int) numStepsLong;
-		state = newPath.getState(0);
+		int numSteps = (int) numStepsLong;
+		
+		createNewPath();
+		State nextState, state = newPath.getState(0);
 		initialisePath(state);
-		for (i = 0; i < numSteps; i++) {
+		for (int i = 0; i < numSteps; i++) {
 			nextState = newPath.getState(i + 1);
 			// Find matching transition
 			// (just look at states for now)
-			TransitionList transitions = getTransitionList();
-			numTrans = transitions.getNumTransitions();
-			found = false;
-			for (j = 0; j < numTrans; j++) {
-				if (transitions.computeTransitionTarget(j, state).equals(nextState)) {
-					found = true;
-					if (modelType.continuousTime() && newPath.hasTimeInfo())
-						manualTransition(j, newPath.getTime(i));
-					else
-						manualTransition(j);
-					break;
+			int numChoices = modelGen.getNumChoices();
+			boolean found = false;
+			for (int j = 0; j < numChoices; j++) {
+				int numTransitions = modelGen.getNumTransitions(j);
+				for (int offset = 0; offset < numTransitions; offset++) {
+					if (modelGen.computeTransitionTarget(j, offset).equals(nextState)) {
+						found = true;
+						if (modelType.continuousTime() && newPath.hasTimeInfo())
+							manualTransition(j, newPath.getTime(i));
+						else
+							manualTransition(j);
+						break;
+					}
 				}
 			}
-			if (!found)
+			if (!found) {
 				throw new PrismException("Path loading failed at step " + (i + 1));
+			}
 			state = nextState;
 		}
 	}
@@ -740,8 +771,10 @@ public class SimulatorEngine extends PrismComponent
 	{
 		// Take a copy
 		Expression propNew = prop.deepCopy();
-		// Combine label lists from model/property file, then expand property refs/labels in property 
-		LabelList combinedLabelList = (pf == null) ? modulesFile.getLabelList() : pf.getCombinedLabelList();
+		// Combine label lists from model/property file, then expand property refs/labels in property
+		// For now, model labels are only handled if stored in pf.getCombinedLabelList(),
+		// which currently only happens if the model came from a ModulesFile
+		LabelList combinedLabelList = (pf == null) ? null : pf.getCombinedLabelList();
 		propNew = (Expression) propNew.expandPropRefsAndLabels(pf, combinedLabelList);
 		// Then get rid of any constants and simplify
 		propNew = (Expression) propNew.replaceConstants(mfConstants);
@@ -750,7 +783,7 @@ public class SimulatorEngine extends PrismComponent
 		}
 		propNew = (Expression) propNew.simplify();
 		// Create sampler
-		Sampler sampler = Sampler.createSampler(propNew, modulesFile);
+		Sampler sampler = Sampler.createSampler(propNew, modelGen, rewardGen);
 		// Update lists and return index
 		// (do this right at the end so that lists only get updated if there are no errors)
 		properties.add(propNew);
@@ -779,14 +812,12 @@ public class SimulatorEngine extends PrismComponent
 	/**
 	 * Check whether the current state is an initial state.
 	 */
-	public boolean queryIsInitial() throws PrismLangException
+	public boolean queryIsInitial() throws PrismException
 	{
-		// Currently init...endinit is not supported so this is easy to check]
+		// Currently multiple initial states are not supported so this is easy to check
 		State current = path.getCurrentState();
-		if (model == null && current != null) {
-			return current.equals(modulesFile.getDefaultInitialState());
-		} else if (current != null) {
-			return current.equals(model.getStatesList().get(model.getFirstInitialState()));
+		if (current != null) {
+			return current.equals(modelGen.getInitialState());
 		} else {
 			return false;
 		}
@@ -797,14 +828,12 @@ public class SimulatorEngine extends PrismComponent
 	 * @param step The index of the step to check for
 	 * (Not applicable for on-the-fly paths)
 	 */
-	public boolean queryIsInitial(int step) throws PrismLangException
+	public boolean queryIsInitial(int step) throws PrismException
 	{
-		// Currently init...endinit is not supported so this is easy to check
+		// Currently multiple initial states are not supported so this is easy to check
 		State state = ((PathFull) path).getState(step);
-		if (model == null && state != null) {
-			return state.equals(modulesFile.getDefaultInitialState());
-		} else if (state != null) {
-			return state.equals(model.getStatesList().get(model.getFirstInitialState()));
+		if (state != null) {
+			return state.equals(modelGen.getInitialState());
 		} else {
 			return false;
 		}
@@ -815,7 +844,7 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public boolean queryIsDeadlock() throws PrismException
 	{
-		return getTransitionList().isDeadlock();
+		return modelGen.isDeadlock();
 	}
 
 	/**
@@ -826,7 +855,7 @@ public class SimulatorEngine extends PrismComponent
 	public boolean queryIsDeadlock(int step) throws PrismException
 	{
 		// By definition, earlier states in the path cannot be deadlocks
-		return step == path.size() ? getTransitionList().isDeadlock() : false;
+		return step == path.size() ? modelGen.getNumChoices() == 0 : false;
 	}
 
 	/**
@@ -849,84 +878,27 @@ public class SimulatorEngine extends PrismComponent
 	// ------------------------------------------------------------------------------
 
 	/**
-	 * Loads a new PRISM model into the simulator.
-	 * @param modulesFile The parsed PRISM model
+	 * Utility method for computing state rewards for all reward structs.
 	 */
-	private void loadModulesFile(ModulesFile modulesFile) throws PrismException
+	private void calculateStateRewards(State state, double[] stateRewards) throws PrismException
 	{
-		loadModel(modulesFile, null);
+		int numRewardStructs = rewardGen.getNumRewardStructs();
+		for (int r = 0; r < numRewardStructs; r++) {
+			stateRewards[r] = rewardGen.getStateReward(r, state);
+		}
 	}
-
+	
 	/**
-	 * Loads a new explicit PRISM model into the simulator.
-	 * @param modulesFile The parsed PRISM model
-	 * @param model The explicit PRISM model
+	 * Utility method for computing transition rewards for all reward structs.
 	 */
-	private void loadModelExplicit(ModulesFile modulesFile, explicit.Model model) throws PrismException
+	private void calculateTransitionRewards(State state, Object action, double[] transitionRewards) throws PrismException
 	{
-		loadModel(modulesFile, model);
-	}
-
-	private void loadModel(ModulesFile modulesFile, explicit.Model model) throws PrismException
-	{
-		// check if model is of correct type for explicit simulator
-		if (model != null && !(model instanceof MDP)) {
-			throw new PrismException("Explicit model not supported");
+		int numRewardStructs = rewardGen.getNumRewardStructs();
+		for (int r = 0; r < numRewardStructs; r++) {
+			transitionRewards[r] = rewardGen.getStateActionReward(r, state, action);
 		}
-
-		// Store model, some info and constants
-		this.modulesFile = modulesFile;
-		if (model != null) {
-			this.model = model;
-			this.states = model.getStatesList();
-			modelType = model.getModelType();
-			// evaluate Rewards
-			rewards = new ArrayList<Rewards>();
-			ConstructRewards constructRewards = new ConstructRewards(mainLog, modulesFile);
-			for (int i = 0; i < modulesFile.getNumRewardStructs(); i++) {
-				try {
-					Rewards reward = constructRewards.buildRewardStructure(model, modulesFile.getRewardStruct(i), this.mfConstants);
-					rewards.add(reward);
-				} catch (Exception e) {
-					// if something went wrong (e.g. variable not found), ignore reward
-				}
-			}
-		} else {
-			modelType = modulesFile.getModelType();
-		}
-		this.mfConstants = modulesFile.getConstantValues();
-		// Check model is simulate-able
-		if (model != null)
-			checkModelForSimulation(model);
-		else
-			checkModelForSimulation(modulesFile);
-
-		// Get variable list (symbol table) for model 
-		varList = modulesFile.createVarList();
-		numVars = varList.getNumVars();
-
-		// Evaluate constants and optimise (a copy of) modules file for simulation
-		modulesFile = (ModulesFile) modulesFile.deepCopy().replaceConstants(mfConstants).simplify();
-
-		// Create state/transition/rewards storage
-		if (model != null)
-			currentState = states.get(model.getFirstInitialState());
-		else
-			currentState = new State(numVars);
-		tmpStateRewards = new double[modulesFile.getNumRewardStructs()];
-		tmpTransitionRewards = new double[modulesFile.getNumRewardStructs()];
-		transitionList = new TransitionList();
-
-		// Create updater for model
-		if (model == null)
-			updater = new Updater(modulesFile, varList, this);
-
-		// Create storage for labels/properties
-		labels = new ArrayList<Expression>();
-		properties = new ArrayList<Expression>();
-		propertySamplers = new ArrayList<Sampler>();
 	}
-
+	
 	/**
 	 * Execute a transition from the current transition list and update path (if being stored).
 	 * Transition is specified by index of its choice and offset within it. If known, its index
@@ -938,54 +910,35 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	private void executeTransition(int i, int offset, int index) throws PrismException
 	{
-		TransitionList transitions = getTransitionList();
-		// Get corresponding choice and, if required (for full paths), calculate transition index
-		Choice choice = transitions.getChoice(i);
-		if (!onTheFly && index == -1)
-			index = transitions.getTotalIndexOfTransition(i, offset);
-		// Get probability for transition
-		double p = choice.getProbability(offset);
-		if (model != null) { // explicit
-			// Compute its transition rewards
-			for (int r = 0; r < rewards.size(); r++) {
-				tmpTransitionRewards[r] = rewards.get(r).getTransitionReward(indexOf(states, currentState), i);
-			}
-			// Compute next state. Note use of path.getCurrentState() because currentState
-			// will be overwritten during the call to computeTarget().
-			currentState = choice.computeTarget(offset, path.getCurrentState());
-			// Compute state rewards for new state 
-			for (int r = 0; r < rewards.size(); r++) {
-				tmpStateRewards[r] = rewards.get(r).getStateReward(indexOf(states, currentState));
-			}
-		} else {
-			// Compute its transition rewards
-			updater.calculateTransitionRewards(path.getCurrentState(), choice, tmpTransitionRewards);
-			// Compute next state. Note use of path.getCurrentState() because currentState
-			// will be overwritten during the call to computeTarget().
-			choice.computeTarget(offset, path.getCurrentState(), currentState);
-			// Compute state rewards for new state 
-			updater.calculateStateRewards(currentState, tmpStateRewards);
+		// If required (for full paths), calculate transition index
+		if (!onTheFly && index == -1) {
+			index = modelGen.getTotalIndexOfTransition(i, offset);
 		}
+		// Get probability and action for transition
+		double p = modelGen.getTransitionProbability(i, offset);
+		Object action = modelGen.getChoiceAction(i);
+		String actionString = modelGen.getChoiceActionString(i);
+		// Compute its transition rewards
+		calculateTransitionRewards(path.getCurrentState(), action, tmpTransitionRewards);
+		// Compute next state
+		currentState.copy(modelGen.computeTransitionTarget(i, offset));
+		// Compute state rewards for new state
+		calculateStateRewards(currentState, tmpStateRewards);
 		// Update strategy
 		if (strategy != null) {
 			try {
-				if (model != null) { // explicit
-					strategy.updateMemory(i, indexOf(states, currentState));
-				} else {
-					strategy.updateMemory(i, stateIds.get(currentState));
-				}
+				strategy.updateMemory(i, stateIds.get(currentState));
 			} catch (InvalidStrategyStateException error) {
 				throw new PrismException("Strategy update failed");
 			}
 		}
 		// Update path
-		path.addStep(index, choice.getModuleOrActionIndex(), p, tmpTransitionRewards, currentState, tmpStateRewards, transitions);
+		path.addStep(index, action, actionString, p, tmpTransitionRewards, currentState, tmpStateRewards, modelGen);
 		if (strategy != null) {
 			path.setStrategyMemoryForCurrentState(strategy.getCurrentMemoryElement());
 		}
-		// Reset transition list 
-		transitionListBuilt = false;
-		transitionListState = null;
+		// Explore new state in model generator
+		computeTransitionsForState(currentState, path.getStrategyMemoryForCurrentState());
 		// Update samplers for any loaded properties
 		updateSamplers();
 	}
@@ -1004,23 +957,20 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	private void executeTimedTransition(int i, int offset, double time, int index) throws PrismException
 	{
-		if (model != null)
-			throw new PrismException("Timed models not supported yet for explicit simulation");
-
-		TransitionList transitions = getTransitionList();
-		// Get corresponding choice and, if required (for full paths), calculate transition index
-		Choice choice = transitions.getChoice(i);
-		if (!onTheFly && index == -1)
-			index = transitions.getTotalIndexOfTransition(i, offset);
-		// Get probability for transition
-		double p = choice.getProbability(offset);
+		// If required (for full paths), calculate transition index
+		if (!onTheFly && index == -1) {
+			index = modelGen.getTotalIndexOfTransition(i, offset);
+		}
+		// Get probability and action for transition
+		double p = modelGen.getTransitionProbability(i, offset);
+		Object action = modelGen.getChoiceAction(i);
+		String actionString = modelGen.getChoiceActionString(i);
 		// Compute its transition rewards
-		updater.calculateTransitionRewards(path.getCurrentState(), choice, tmpTransitionRewards);
-		// Compute next state. Note use of path.getCurrentState() because currentState
-		// will be overwritten during the call to computeTarget().
-		choice.computeTarget(offset, path.getCurrentState(), currentState);
-		// Compute state rewards for new state 
-		updater.calculateStateRewards(currentState, tmpStateRewards);
+		calculateTransitionRewards(path.getCurrentState(), action, tmpTransitionRewards);
+		// Compute next state
+		currentState.copy(modelGen.computeTransitionTarget(i, offset));
+		// Compute state rewards for new state
+		calculateStateRewards(currentState, tmpStateRewards);
 		// Update strategy
 		if (strategy != null) {
 			try {
@@ -1030,13 +980,12 @@ public class SimulatorEngine extends PrismComponent
 			}
 		}
 		// Update path
-		path.addStep(time, index, choice.getModuleOrActionIndex(), p, tmpTransitionRewards, currentState, tmpStateRewards, transitions);
+		path.addStep(time, index, action, actionString, p, tmpTransitionRewards, currentState, tmpStateRewards, modelGen);
 		if (strategy != null) {
 			path.setStrategyMemoryForCurrentState(strategy.getCurrentMemoryElement());
 		}
-		// Reset transition list 
-		transitionListBuilt = false;
-		transitionListState = null;
+		// Explore new state in model generator
+		computeTransitionsForState(currentState, path.getStrategyMemoryForCurrentState());
 		// Update samplers for any loaded properties
 		updateSamplers();
 	}
@@ -1057,7 +1006,7 @@ public class SimulatorEngine extends PrismComponent
 	private void updateSamplers() throws PrismException
 	{
 		for (Sampler sampler : propertySamplers) {
-			sampler.update(path, getTransitionList());
+			sampler.update(path, modelGen);
 		}
 	}
 
@@ -1065,7 +1014,7 @@ public class SimulatorEngine extends PrismComponent
 	 * Recompute the state of samplers for any loaded properties based on the whole current path.
 	 * (Not applicable for on-the-fly paths)
 	 */
-	private void recomputeSamplers() throws PrismLangException
+	private void recomputeSamplers() throws PrismException
 	{
 		resetSamplers();
 		// Get length (non-on-the-fly paths will never exceed length Integer.MAX_VALUE) 
@@ -1136,19 +1085,6 @@ public class SimulatorEngine extends PrismComponent
 	// ------------------------------------------------------------------------------
 
 	/**
-	 * Returns the current list of available transitions, generating it first if this has not yet been done.
-	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
-	 */
-	public TransitionList getTransitionList() throws PrismException
-	{
-		// Compute the current transition list, if required
-		if (!transitionListBuilt) {
-			computeTransitionsForCurrentState();
-		}
-		return transitionList;
-	}
-
-	/**
 	 * Get the state for which the simulator is currently supplying information about its transitions. 
 	 * Usually, this is the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be this state instead.
 	 */
@@ -1164,7 +1100,7 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public int getNumChoices() throws PrismException
 	{
-		return getTransitionList().getNumChoices();
+		return modelGen.getNumChoices();
 	}
 
 	/**
@@ -1173,7 +1109,7 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public int getNumTransitions() throws PrismException
 	{
-		return getTransitionList().getNumTransitions();
+		return modelGen.getNumTransitions();
 	}
 
 	/**
@@ -1182,7 +1118,7 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public int getNumTransitions(int i) throws PrismException
 	{
-		return getTransitionList().getChoice(i).size();
+		return modelGen.getNumTransitions(i);
 	}
 
 	/**
@@ -1191,76 +1127,49 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public int getChoiceIndexOfTransition(int index) throws PrismException
 	{
-		return getTransitionList().getChoiceIndexOfTransition(index);
+		return modelGen.getChoiceIndexOfTransition(index);
 	}
 
 	/**
-	 * Get a string describing the action/module of a transition, specified by its index/offset.
-	 * (form is "module" or "[action]")
-	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
-	 */
-	public String getTransitionModuleOrAction(int i, int offset) throws PrismException
-	{
-		TransitionList transitions = getTransitionList();
-		return transitions.getTransitionModuleOrAction(transitions.getTotalIndexOfTransition(i, offset));
-	}
-
-	/**
-	 * Get a string describing the action/module of a transition, specified by its index.
-	 * (form is "module" or "[action]")
-	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
-	 */
-	public String getTransitionModuleOrAction(int index) throws PrismException
-	{
-		return getTransitionList().getTransitionModuleOrAction(index);
-	}
-
-	/**
-	 * Get the index of the action/module of a transition, specified by its index/offset.
-	 * (-i for independent in ith module, i for synchronous on ith action)
-	 * (in both cases, modules/actions are 1-indexed)
-	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
-	 */
-	public int getTransitionModuleOrActionIndex(int i, int offset) throws PrismException
-	{
-		TransitionList transitions = getTransitionList();
-		return transitions.getTransitionModuleOrActionIndex(transitions.getTotalIndexOfTransition(i, offset));
-	}
-
-	/**
-	 * Get the index of the action/module of a transition, specified by its index.
-	 * (-i for independent in ith module, i for synchronous on ith action)
-	 * (in both cases, modules/actions are 1-indexed)
-	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
-	 */
-	public int getTransitionModuleOrActionIndex(int index) throws PrismException
-	{
-		return getTransitionList().getTransitionModuleOrActionIndex(index);
-	}
-
-	/**
-	 * Get the action label of a transition as a string, specified by its index/offset.
+	 * Get the action label of a transition, specified by its index/offset.
 	 * (null for asynchronous/independent transitions)
-	 * (see also {@link #getTransitionModuleOrAction(int, int)} and {@link #getTransitionModuleOrActionIndex(int, int)})
 	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
 	 */
-	public String getTransitionAction(int i, int offset) throws PrismException
+	public Object getTransitionAction(int i, int offset) throws PrismException
 	{
-		TransitionList transitions = getTransitionList();
-		int a = transitions.getTransitionModuleOrActionIndex(transitions.getTotalIndexOfTransition(i, offset));
-		return a < 0 ? null : modulesFile.getSynch(a - 1);
+		return modelGen.getTransitionAction(i, offset);
 	}
 
 	/**
-	 * Get the action label of a transition as a string, specified by its index.
+	 * Get the action label of a transition, specified by its index.
 	 * (null for asynchronous/independent transitions)
-	 * (see also {@link #getTransitionModuleOrAction(int)} and {@link #getTransitionModuleOrActionIndex(int)})
 	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
 	 */
-	public String getTransitionAction(int index) throws PrismException
+	public Object getTransitionAction(int index) throws PrismException
 	{
-		int a = getTransitionList().getTransitionModuleOrActionIndex(index);
-		return a < 0 ? null : modulesFile.getSynch(a - 1);
+		int i = modelGen.getChoiceIndexOfTransition(index);
+		int offset = modelGen.getChoiceOffsetOfTransition(index);
+		return modelGen.getTransitionAction(i, offset);
+	}
+
+	/**
+	 * Get a string describing the action of a transition, specified by its index/offset.
+	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
+	 */
+	public String getTransitionActionString(int i, int offset) throws PrismException
+	{
+		return modelGen.getTransitionActionString(i, offset);
+	}
+
+	/**
+	 * Get a string describing the action of a transition, specified by its index.
+	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
+	 */
+	public String getTransitionActionString(int index) throws PrismException
+	{
+		int i = modelGen.getChoiceIndexOfTransition(index);
+		int offset = modelGen.getChoiceOffsetOfTransition(index);
+		return getTransitionActionString(i, offset);
 	}
 
 	/**
@@ -1269,8 +1178,7 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public double getTransitionProbability(int i, int offset) throws PrismException
 	{
-		TransitionList transitions = getTransitionList();
-		return transitions.getChoice(i).getProbability(offset);
+		return modelGen.getTransitionProbability(i, offset);
 	}
 
 	/**
@@ -1279,33 +1187,49 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public double getTransitionProbability(int index) throws PrismException
 	{
-		TransitionList transitions = getTransitionList();
-		return transitions.getTransitionProbability(index);
+		int i = modelGen.getChoiceIndexOfTransition(index);
+		int offset = modelGen.getChoiceOffsetOfTransition(index);
+		return getTransitionProbability(i, offset);
 	}
 
 	/**
-	 * Get a string describing the updates making up a transition, specified by its index.
-	 * This is in abbreviated form, i.e. x'=1, rather than x'=x+1.
-	 * Format is: x'=1, y'=0, with empty string for empty update.
-	 * Only variables updated are included in list (even if unchanged).
+	 * Get a string describing the update comprising a transition, specified by its index/offset.
+	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
+	 */
+	public String getTransitionUpdateString(int i, int offset) throws PrismException
+	{
+		return modelGen.getTransitionUpdateString(i, offset);
+	}
+
+	/**
+	 * Get a string describing the update comprising a transition, specified by its index.
 	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
 	 */
 	public String getTransitionUpdateString(int index) throws PrismException
 	{
-		return getTransitionList().getTransitionUpdateString(index, getTransitionListState());
+		int i = modelGen.getChoiceIndexOfTransition(index);
+		int offset = modelGen.getChoiceOffsetOfTransition(index);
+		return getTransitionUpdateString(i, offset);
 	}
 
 	/**
-	 * Get a string describing the updates making up a transition, specified by its index.
-	 * This is in full, i.e. of the form x'=x+1, rather than x'=1.
-	 * Format is: (x'=x+1) & (y'=y-1), with empty string for empty update.
-	 * Only variables updated are included in list.
-	 * Note that expressions may have been simplified from original model. 
+	 * Get a verbose string describing the update comprising a transition, specified by its index/offset.
+	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
+	 */
+	public String getTransitionUpdateStringFull(int i, int offset) throws PrismException
+	{
+		return modelGen.getTransitionUpdateStringFull(i, offset);
+	}
+
+	/**
+	 * Get a verbose string describing the update comprising a transition, specified by its index.
 	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
 	 */
 	public String getTransitionUpdateStringFull(int index) throws PrismException
 	{
-		return getTransitionList().getTransitionUpdateStringFull(index);
+		int i = modelGen.getChoiceIndexOfTransition(index);
+		int offset = modelGen.getChoiceOffsetOfTransition(index);
+		return getTransitionUpdateStringFull(i, offset);
 	}
 
 	/**
@@ -1314,7 +1238,7 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public State computeTransitionTarget(int i, int offset) throws PrismException
 	{
-		return getTransitionList().getChoice(i).computeTarget(offset, getTransitionListState());
+		return modelGen.computeTransitionTarget(i, offset);
 	}
 
 	/**
@@ -1323,66 +1247,31 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public State computeTransitionTarget(int index) throws PrismException
 	{
-		return getTransitionList().computeTransitionTarget(index, getTransitionListState());
+		int i = modelGen.getChoiceIndexOfTransition(index);
+		int offset = modelGen.getChoiceOffsetOfTransition(index);
+		return computeTransitionTarget(i, offset);
 	}
 
 	/**
-	 * Get (the number of) the player owning choice i. Returns -1 if unknown.
-	 * Assuming a turn-based game model, this will give the same result for all choices in the same state.
+	 * For turn-based game models, get the player that owns/controls the current state.
+	 * This is returned as the (zero-indexed) index of the player.
+	 * Returns -1 if not known or not applicable.
 	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
 	 */
-	public int getPlayerNumber(int i) throws PrismException
+	public int getPlayerOwningState() throws PrismException
 	{
-		return (model == null) ? getImplicitPlayerNumber(i) : getExplicitPlayerNumber(i);
+		return modelGen.getPlayerOwningState();
 	}
 
 	/**
-	 * Get the name of the player owning choice i. Returns null if unknown.
-	 * Assuming a turn-based game model, this will give the same result for all choices in the same state.
+	 * For turn-based game models, get the name of the player that owns/controls the current state.
+	 * Returns null if not known or not applicable.
 	 * Usually, this is for the current (final) state of the path but, if you called {@link #computeTransitionsForStep(int step)}, it will be for this state instead.
-	 * Returns the name of the player owning choice {@index} in the state viewed by the simulator.
 	 */
-	public String getPlayerName(int i) throws PrismException
+	public String getNameOfPlayerOwningState() throws PrismException
 	{
-		return (model == null) ? getImplicitPlayer(i) : getExplicitPlayer(i);
-	}
-
-	private int getImplicitPlayerNumber(int i) throws PrismException
-	{
-		String modAct = getTransitionModuleOrAction(i, 0);
-		return modulesFile.getPlayerForModuleOrAction(modAct) + 1;
-	}
-
-	private String getImplicitPlayer(int i) throws PrismException
-	{
-		int player = getImplicitPlayerNumber(i);
-		return (player == -1) ? null : modulesFile.getPlayer(player - 1).getName();
-	}
-
-	private int getExplicitPlayerNumber(int i) throws PrismException
-	{
-		return (model instanceof STPG) ? ((STPG) model).getPlayer(indexOf(states, getTransitionListState())) : -1;
-	}
-	
-	private String getExplicitPlayer(int index) throws PrismException
-	{
-		int player = getExplicitPlayerNumber(index);
-		if (player == -1) {
-			return null;
-		}
-		String pstring = "";
-		if (player < modulesFile.getNumPlayers()) {
-			pstring = modulesFile.getPlayer(player - 1).getName();
-		} else {
-			pstring = String.format("P%d", player);
-		}
-		if (model instanceof STPG) { // contains controlled-by information
-			int p = ((SMG) model).getControlledBy().get(indexOf(states, getTransitionListState()));
-			if (p >= 0) {
-				pstring += String.format("(%d)", p);
-			}
-		}
-		return pstring;
+		int player = getPlayerOwningState();
+		return (player == -1) ? null : modelGen.getPlayerName(player);
 	}
 
 	/**
@@ -1390,7 +1279,7 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public boolean hasStrategyChoiceInfo() throws PrismException
 	{
-		return getTransitionList().hasStrategyChoiceInfo();
+		return strategyProbabilities != null;
 	}
 
 	/**
@@ -1399,7 +1288,7 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public double getStrategyProbabilityForChoice(int i) throws PrismException
 	{
-		return getTransitionList().getStrategyProbabilityForChoice(i);
+		return strategyProbabilities == null ? 1.0 : strategyProbabilities[i];
 	}
 
 	/**
@@ -1418,8 +1307,6 @@ public class SimulatorEngine extends PrismComponent
 				return "";
 			} else if (strategy instanceof StochasticUpdateStrategy) {
 				return ((StochasticUpdateStrategy) strategy).memoryUpdateString(stateIndex, choice, nextIndex, df);
-			} else if (strategy instanceof StochasticUpdateStrategyProduct) {
-				return ((StochasticUpdateStrategyProduct) strategy).memoryUpdateString(stateIndex, choice, nextIndex, df);
 			} else {
 				return df.format(getStrategyProbabilityForChoice(choice));
 			}
@@ -1573,25 +1460,23 @@ public class SimulatorEngine extends PrismComponent
 	}
 
 	/**
-	 * Get the index i of the action taken for a given step.
-	 * If i>0, then i-1 is the index of an action label (0-indexed)
-	 * If i<0, then -i-1 is the index of a module (0-indexed)
+	 * Get the action taken in a given step.
 	 * (Not applicable for on-the-fly paths)
 	 * @param step Step index (0 = initial state/step of path)
 	 */
-	public int getModuleOrActionIndexOfPathStep(int step)
+	public Object getActionOfPathStep(int step)
 	{
-		return ((PathFull) path).getModuleOrActionIndex(step);
+		return ((PathFull) path).getAction(step);
 	}
 
 	/**
-	 * Get a string describing the action/module of a given step.
+	 * Get a string describing the action taken in a given step.
 	 * (Not applicable for on-the-fly paths)
 	 * @param step Step index (0 = initial state/step of path)
 	 */
-	public String getModuleOrActionOfPathStep(int step)
+	public String getActionStringOfPathStep(int step)
 	{
-		return ((PathFull) path).getModuleOrAction(step);
+		return ((PathFull) path).getActionString(step);
 	}
 
 	/**
@@ -1635,7 +1520,18 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public void exportPath(File file) throws PrismException
 	{
-		exportPath(file, false, " ", null);
+		exportPath(file, false);
+	}
+
+	/**
+	 * Export the current path to a file in a simple space separated format.
+	 * (Not applicable for on-the-fly paths)
+	 * @param file File to which the path should be exported to (mainLog if null).
+	 * @param showRewards Export reward information with the path
+	 */
+	public void exportPath(File file, boolean showRewards) throws PrismException
+	{
+		exportPath(file, false, showRewards, " ", null);
 	}
 
 	/**
@@ -1648,23 +1544,42 @@ public class SimulatorEngine extends PrismComponent
 	 */
 	public void exportPath(File file, boolean timeCumul, String colSep, ArrayList<Integer> vars) throws PrismException
 	{
-		PrismLog log;
-		if (path == null)
-			throw new PrismException("There is no path to export");
-		// create new file log or use main log
-		if (file != null) {
-			log = new PrismFileLog(file.getPath());
-			if (!log.ready()) {
-				throw new PrismException("Could not open file \"" + file + "\" for output");
+		exportPath(file, timeCumul, false, colSep, vars);
+	}
+
+	/**
+	 * Export the current path to a file.
+	 * (Not applicable for on-the-fly paths)
+	 * @param file File to which the path should be exported to (mainLog if null).
+	 * @param timeCumul Show time in cumulative form?
+	 * @param showRewards Export reward information with the path
+	 * @param colSep String used to separate columns in display
+	 * @param vars Restrict printing to these variables (indices) and steps which change them (ignore if null)
+	 */
+	public void exportPath(File file, boolean timeCumul, boolean showRewards, String colSep, ArrayList<Integer> vars) throws PrismException
+	{
+		PrismLog log = null;
+		try {
+			if (path == null)
+				throw new PrismException("There is no path to export");
+			// create new file log or use main log
+			if (file != null) {
+				log = new PrismFileLog(file.getPath());
+				if (!log.ready()) {
+					throw new PrismException("Could not open file \"" + file + "\" for output");
+				}
+				mainLog.println("\nExporting path to file \"" + file + "\"...");
+			} else {
+				log = mainLog;
+				log.println();
 			}
-			mainLog.println("\nExporting path to file \"" + file + "\"...");
-		} else {
-			log = mainLog;
-			log.println();
+			((PathFull) path).exportToLog(log, timeCumul, showRewards, colSep, vars);
+			if (file != null)
+				log.close();
+		} finally {
+			if (file != null && log != null)
+				log.close();
 		}
-		((PathFull) path).exportToLog(log, timeCumul, colSep, vars);
-		if (file != null)
-			log.close();
 	}
 
 	/**
@@ -1677,11 +1592,11 @@ public class SimulatorEngine extends PrismComponent
 	}
 
 	// ------------------------------------------------------------------------------
-	// Model checking (approximate)
+	// Model checking (statistical/approximate)
 	// ------------------------------------------------------------------------------
 
 	/**
-	 * Check whether a property is suitable for approximate model checking using the simulator.
+	 * Check whether a property is suitable for statistical/approximate model checking using the simulator.
 	 */
 	public boolean isPropertyOKForSimulation(Expression expr)
 	{
@@ -1689,18 +1604,18 @@ public class SimulatorEngine extends PrismComponent
 	}
 
 	/**
-	 * Check whether a property is suitable for approximate model checking using the simulator.
+	 * Check whether a property is suitable for statistical/approximate model checking using the simulator.
 	 * If not, an explanatory error message is thrown as an exception.
 	 */
 	public void checkPropertyForSimulation(Expression expr) throws PrismException
 	{
 		String errMsg = isPropertyOKForSimulationString(expr);
 		if (errMsg != null)
-			throw new PrismException(errMsg);
+			throw new PrismNotSupportedException(errMsg);
 	}
 
 	/**
-	 * Check whether a property is suitable for approximate model checking using the simulator.
+	 * Check whether a property is suitable for statistical/approximate model checking using the simulator.
 	 * If yes, return null; if not, return an explanatory error message.
 	 */
 	private String isPropertyOKForSimulationString(Expression expr)
@@ -1742,62 +1657,52 @@ public class SimulatorEngine extends PrismComponent
 	}
 
 	/**
-	 * Perform approximate model checking of a property on a model, using the simulator.
+	 * Perform statistical/approximate model checking of a property on the current model, using the simulator.
 	 * Sampling starts from the initial state provided or, if null, the default
 	 * initial state is used, selecting randomly (each time) if there are more than one.
 	 * Returns a Result object, except in case of error, where an Exception is thrown.
 	 * Note: All constants in the model/property files must have already been defined.
-	 * @param modulesFile Model for simulation, constants defined
 	 * @param propertiesFile Properties file containing property to check, constants defined
 	 * @param expr The property to check
 	 * @param initialState Initial state (if null, is selected randomly)
 	 * @param maxPathLength The maximum path length for sampling
 	 * @param simMethod Object specifying details of method to use for simulation
 	 */
-	// CLEMENS: TODO
-	public Object modelCheckSingleProperty(ModulesFile modulesFile, PropertiesFile propertiesFile, Expression expr, State initialState, long maxPathLength,
+	public Result modelCheckSingleProperty(PropertiesFile propertiesFile, Expression expr, State initialState, long maxPathLength,
 			SimulationMethod simMethod) throws PrismException
 	{
 		ArrayList<Expression> exprs;
-		Object res[];
+		Result res[];
 
 		// Just do this via the 'multiple properties' method
 		exprs = new ArrayList<Expression>();
 		exprs.add(expr);
-		res = modelCheckMultipleProperties(modulesFile, propertiesFile, exprs, initialState, maxPathLength, simMethod);
+		res = modelCheckMultipleProperties(propertiesFile, exprs, initialState, maxPathLength, simMethod);
 
-		if (res[0] instanceof PrismException)
-			throw (PrismException) res[0];
+		if (res[0].getResult() instanceof PrismException)
+			throw (PrismException) res[0].getResult();
 		else
 			return res[0];
 	}
 
-	// CLEMENS: TODO
-	public Object modelCheckSingleProperty(ModulesFile modulesFile, explicit.Model model, PropertiesFile propertiesFile, Expression expr, State initialState,
-			long maxPathLength, SimulationMethod simMethod) throws PrismException
-	{
-		throw new PrismException("Explicit models not supported by simulator engine");
-	}
-
 	/**
-	 * Perform approximate model checking of properties on a model, using the simulator.
+	 * Perform statistical/approximate model checking of properties on the current model, using the simulator.
 	 * Sampling starts from the initial state provided or, if null, the default
 	 * initial state is used, selecting randomly (each time) if there are more than one.
-	 * Returns an array of results, some of which may be Exception objects if there were errors.
+	 * Returns an array of results, some of which may contain Exception objects if there were errors.
 	 * In the case of an error which affects all properties, an exception is thrown.
 	 * Note: All constants in the model/property files must have already been defined.
-	 * @param modulesFile Model for simulation, constants defined
 	 * @param propertiesFile Properties file containing property to check, constants defined
 	 * @param exprs The properties to check
 	 * @param initialState Initial state (if null, is selected randomly)
 	 * @param maxPathLength The maximum path length for sampling
 	 * @param simMethod Object specifying details of method to use for simulation
 	 */
-	public Object[] modelCheckMultipleProperties(ModulesFile modulesFile, PropertiesFile propertiesFile, List<Expression> exprs, State initialState,
+	public Result[] modelCheckMultipleProperties(PropertiesFile propertiesFile, List<Expression> exprs, State initialState,
 			long maxPathLength, SimulationMethod simMethod) throws PrismException
 	{
-		// Load model into simulator
-		createNewOnTheFlyPath(modulesFile);
+		// Create path to be used
+		createNewOnTheFlyPath();
 
 		// Make sure any missing parameters that can be computed before simulation
 		// are computed now (sometimes this has been done already, e.g. for GUI display).
@@ -1809,7 +1714,7 @@ public class SimulatorEngine extends PrismComponent
 		mainLog.println("Simulation parameters: max path length=" + maxPathLength);
 
 		// Add the properties to the simulator (after a check that they are valid)
-		Object[] results = new Object[exprs.size()];
+		Result[] results = new Result[exprs.size()];
 		int[] indices = new int[exprs.size()];
 		int validPropsCount = 0;
 		for (int i = 0; i < exprs.size(); i++) {
@@ -1831,7 +1736,7 @@ public class SimulatorEngine extends PrismComponent
 					throw e;
 				}
 			} catch (PrismException e) {
-				results[i] = e;
+				results[i] = new Result(e);
 				indices[i] = -1;
 			}
 		}
@@ -1843,58 +1748,46 @@ public class SimulatorEngine extends PrismComponent
 
 		// Process the results
 		for (int i = 0; i < results.length; i++) {
-			// If there was an earlier error, nothing to do
+			// If there was no earlier error, extract result etc.
 			if (indices[i] != -1) {
 				Sampler sampler = propertySamplers.get(indices[i]);
-				//mainLog.print("Simulation results: mean: " + sampler.getMeanValue());
-				//mainLog.println(", variance: " + sampler.getVariance());
 				SimulationMethod sm = sampler.getSimulationMethod();
 				// Compute/print any missing parameters that need to be done after simulation
 				sm.computeMissingParameterAfterSim();
 				// Extract result from SimulationMethod and store
 				try {
-					results[i] = sm.getResult(sampler);
+					results[i] = new Result(sm.getResult(sampler));
+					results[i].setAccuracy(sampler.getSimulationMethod().getResultAccuracy(sampler));
 				} catch (PrismException e) {
-					results[i] = e;
+					results[i] = new Result(e);
 				}
 			}
 		}
 
-		// Display results to log
-		if (results.length == 1) {
-			mainLog.print("\nSimulation method parameters: ");
-			mainLog.println((indices[0] == -1) ? "no simulation" : propertySamplers.get(indices[0]).getSimulationMethod().getParametersString());
-			mainLog.print("\nSimulation result details: ");
-			mainLog.println((indices[0] == -1) ? "no simulation" : propertySamplers.get(indices[0]).getSimulationMethodResultExplanation());
-			if (!(results[0] instanceof PrismException))
-				mainLog.println("\nResult: " + results[0]);
-		} else {
-			mainLog.println("\nSimulation method parameters:");
-			for (int i = 0; i < results.length; i++) {
-				mainLog.print(exprs.get(i) + " : ");
-				mainLog.println((indices[i] == -1) ? "no simulation" : propertySamplers.get(indices[i]).getSimulationMethod().getParametersString());
+		// Warning for nondeterministic models
+		if (results.length > 0) {
+			ModelType currentModelType = modelGen.getModelType();
+			if (currentModelType.nondeterministic() && currentModelType.removeNondeterminism() != currentModelType) {
+				mainLog.println("Warning: Nondeterminism in " + currentModelType.name() + " was resolved uniformly");
 			}
-			mainLog.println("\nSimulation result details:");
-			for (int i = 0; i < results.length; i++) {
-				mainLog.print(exprs.get(i) + " : ");
-				mainLog.println((indices[i] == -1) ? "no simulation" : propertySamplers.get(indices[i]).getSimulationMethodResultExplanation());
-			}
-			mainLog.println("\nResults:");
-			for (int i = 0; i < results.length; i++)
-				mainLog.println(exprs.get(i) + " : " + results[i]);
 		}
 
+		
+		// Display results to log
+		if (results.length == 1) {
+			if (!(results[0].getResult() instanceof PrismException))
+				mainLog.println("\nResult: " + results[0].getResultAndAccuracy());
+		} else {
+			mainLog.println("\nResults:");
+			for (int i = 0; i < results.length; i++)
+				mainLog.println(exprs.get(i) + " : " + results[i].getResultAndAccuracy());
+		}
+		
 		return results;
 	}
 
-	public Object[] modelCheckMultipleProperties(ModulesFile modulesFile, explicit.Model model, PropertiesFile propertiesFile, List<Expression> exprs,
-			State initialState, long maxPathLength, SimulationMethod simMethod) throws PrismException
-	{
-		throw new PrismException("Explicit models not supported by simulator engine");
-	}
-
 	/**
-	 * Perform an approximate model checking experiment on a model, using the simulator
+	 * Perform a statistical/approximate model checking experiment on the current model, using the simulator
 	 * (specified by values for undefined constants from the property only).
 	 * Sampling starts from the initial state provided or, if null, the default
 	 * initial state is used, selecting randomly (each time) if there are more than one.
@@ -1902,7 +1795,6 @@ public class SimulatorEngine extends PrismComponent
 	 * some of which may be Exception objects if there were errors.
 	 * In the case of an error which affects all properties, an exception is thrown.
 	 * Note: All constants in the model file must have already been defined.
-	 * @param modulesFile Model for simulation, constants defined
 	 * @param propertiesFile Properties file containing property to check, constants defined
 	 * @param undefinedConstants Details of constant ranges defining the experiment
 	 * @param resultsCollection Where to store the results
@@ -1913,12 +1805,12 @@ public class SimulatorEngine extends PrismComponent
 	 * @throws PrismException if something goes wrong with the sampling algorithm
 	 * @throws InterruptedException if the thread is interrupted
 	 */
-	public void modelCheckExperiment(ModulesFile modulesFile, PropertiesFile propertiesFile, UndefinedConstants undefinedConstants,
+	public void modelCheckExperiment(PropertiesFile propertiesFile, UndefinedConstants undefinedConstants,
 			ResultsCollection resultsCollection, Expression expr, State initialState, long maxPathLength, SimulationMethod simMethod) throws PrismException,
 			InterruptedException
 	{
-		// Load model into simulator
-		createNewOnTheFlyPath(modulesFile);
+		// Create path to be used
+		createNewOnTheFlyPath();
 
 		// Make sure any missing parameters that can be computed before simulation
 		// are computed now (sometimes this has been done already, e.g. for GUI display).
@@ -1932,7 +1824,7 @@ public class SimulatorEngine extends PrismComponent
 		// Add the properties to the simulator (after a check that they are valid)
 		int n = undefinedConstants.getNumPropertyIterations();
 		Values definedPFConstants = new Values();
-		Object[] results = new Object[n];
+		Result[] results = new Result[n];
 		Values[] pfcs = new Values[n];
 		int[] indices = new int[n];
 
@@ -1940,7 +1832,8 @@ public class SimulatorEngine extends PrismComponent
 		for (int i = 0; i < n; i++) {
 			definedPFConstants = undefinedConstants.getPFConstantValues();
 			pfcs[i] = definedPFConstants;
-			propertiesFile.setSomeUndefinedConstants(definedPFConstants);
+			// for simulation, use non-exact constant evaluation
+			propertiesFile.setSomeUndefinedConstants(definedPFConstants, false);
 			try {
 				checkPropertyForSimulation(expr);
 				indices[i] = addProperty(expr, propertiesFile);
@@ -1960,7 +1853,7 @@ public class SimulatorEngine extends PrismComponent
 					throw e;
 				}
 			} catch (PrismException e) {
-				results[i] = e;
+				results[i] = new Result(e);
 				indices[i] = -1;
 			}
 			undefinedConstants.iterateProperty();
@@ -1973,45 +1866,29 @@ public class SimulatorEngine extends PrismComponent
 
 		// Process the results
 		for (int i = 0; i < n; i++) {
-			// If there was an earlier error, nothing to do
+			// If there was no earlier error, extract result etc.
 			if (indices[i] != -1) {
 				Sampler sampler = propertySamplers.get(indices[i]);
-				//mainLog.print("Simulation results: mean: " + sampler.getMeanValue());
-				//mainLog.println(", variance: " + sampler.getVariance());
 				SimulationMethod sm = sampler.getSimulationMethod();
 				// Compute/print any missing parameters that need to be done after simulation
 				sm.computeMissingParameterAfterSim();
 				// Extract result from SimulationMethod and store
 				try {
-					results[i] = sm.getResult(sampler);
+					results[i] = new Result(sm.getResult(sampler));
+					results[i].setAccuracy(sampler.getSimulationMethod().getResultAccuracy(sampler));
 				} catch (PrismException e) {
-					results[i] = e;
+					results[i] = new Result(e);
 				}
 			}
 			// Store result in the ResultsCollection
-			resultsCollection.setResult(undefinedConstants.getMFConstantValues(), pfcs[i], results[i]);
+			resultsCollection.setResult(undefinedConstants.getMFConstantValues(), pfcs[i], results[i].getResult());
 		}
 
 		// Display results to log
-		mainLog.println("\nSimulation method parameters:");
-		for (int i = 0; i < results.length; i++) {
-			mainLog.print(pfcs[i] + " : ");
-			mainLog.println((indices[i] == -1) ? "no simulation" : propertySamplers.get(indices[i]).getSimulationMethod().getParametersString());
-		}
-		mainLog.println("\nSimulation result details:");
-		for (int i = 0; i < results.length; i++) {
-			mainLog.print(pfcs[i] + " : ");
-			mainLog.println((indices[i] == -1) ? "no simulation" : propertySamplers.get(indices[i]).getSimulationMethodResultExplanation());
-		}
 		mainLog.println("\nResults:");
-		mainLog.print(resultsCollection.toStringPartial(undefinedConstants.getMFConstantValues(), true, " ", " : ", false));
-	}
-
-	public void modelCheckExperiment(ModulesFile modulesFile, explicit.Model model, PropertiesFile propertiesFile, UndefinedConstants undefinedConstants,
-			ResultsCollection resultsCollection, Expression expr, State initialState, long maxPathLength, SimulationMethod simMethod) throws PrismException,
-			InterruptedException
-	{
-		throw new PrismException("Explicit models not supported by simulator engine");
+		for (int i = 0; i < results.length; i++)
+			mainLog.println(pfcs[i] + " : " + results[i].getResultAndAccuracy());
+		//mainLog.print(resultsCollection.toStringPartial(undefinedConstants.getMFConstantValues(), true, " ", " : ", false));
 	}
 
 	/**
@@ -2168,24 +2045,18 @@ public class SimulatorEngine extends PrismComponent
 	public void setStrategy(Strategy strategy)
 	{
 		this.strategy = strategy;
-		if (model == null) {
-			if (strategy != null && prism.getBuiltModelExplicit() != null) {
-				stateIds = new HashMap<State, Integer>();
-				java.util.List<State> stateslist = prism.getBuiltModelExplicit().getStatesList();
-				int i = 0;
-				for (State s : stateslist)
-					stateIds.put(s, i++);
-			}
+		if (strategy != null && prism.getBuiltModelExplicit() != null) {
+			stateIds = new HashMap<State, Integer>();
+			java.util.List<State> stateslist = prism.getBuiltModelExplicit().getStatesList();
+			int i = 0;
+			for (State s : stateslist)
+				stateIds.put(s, i++);
 		}
 	}
 	
 	private int getStateIndex(State state)
 	{
-		if (model != null) {
-			return indexOf(states, state);
-		} else {
-			return stateIds.get(state);
-		}
+		return stateIds.get(state);
 	}
 
 	private <T> int indexOf(List<T> list, T o)

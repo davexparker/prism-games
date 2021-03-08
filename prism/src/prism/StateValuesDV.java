@@ -33,7 +33,6 @@ import jdd.*;
 import odd.*;
 import parser.VarList;
 import parser.ast.RelOp;
-import parser.type.*;
 
 /**
  * Class for state-indexed vectors of (integer or double) values,
@@ -44,6 +43,9 @@ public class StateValuesDV implements StateValues
 	/** Double vector storing values */
 	DoubleVector values;
 
+	/** Accuracy info */
+	Accuracy accuracy;
+	
 	// info from model
 	/** The underlying model */
 	Model model;
@@ -56,25 +58,6 @@ public class StateValuesDV implements StateValues
 	/** The VarList of the underlying model*/
 	VarList varList;
 
-	// stuff to keep track of variable values in print method
-	int[] varSizes;
-	int[] varValues;
-	int currentVar;
-	int currentVarLevel;
-	int counter;
-
-	/** Log for output from print method */
-	PrismLog outputLog;
-
-	/** Flag: printSparse (only non-zero values) */
-	boolean printSparse = true;
-	/** Flag: printMatlab */
-	boolean printMatlab = false;
-	/** Flag: printStates (variable values on the model) */
-	boolean printStates = true;
-	/** Flag: printIndizes (indizes for the states) */
-	boolean printIndices = true;
-
 	// CONSTRUCTORS
 
 	/**
@@ -84,9 +67,21 @@ public class StateValuesDV implements StateValues
 	 */
 	public StateValuesDV(DoubleVector values, Model model)
 	{
-		// store values vector
-		this.values = values;
+		this (values, model, null);
+	}
 
+	/**
+	 * Constructor from a double vector (which is stored, not copied).
+	 * Also set the accuracy info.
+	 * @param values the double vector
+	 * @param model the underlying model
+	 * @param accuracy result accuracy info
+	 */
+	public StateValuesDV(DoubleVector values, Model model, Accuracy accuracy)
+	{
+		// store values vector and accuracy
+		this.values = values;
+		setAccuracy(accuracy);
 		// get info from model
 		setModel(model);
 	}
@@ -103,7 +98,24 @@ public class StateValuesDV implements StateValues
 	public StateValuesDV(JDDNode dd, Model model) throws PrismException
 	{
 		// TODO: Enforce/check that dd is zero for all non-reachable states
-		this(new DoubleVector(dd, model.getAllDDRowVars(), model.getODD()), model);
+		this(dd, model, null);
+	}
+
+	/**
+	 * Constructor from an MTBDD.
+	 * Also set the accuracy info.
+	 * <br>
+	 * Note: The JDDNode dd must only be non-zero for reachable states
+	 * (otherwise bad things happen)
+	 * <br>[ DEREFS: <i>none</i> ]
+	 * @param dd the double vector
+	 * @param model the underlying model
+	 * @param accuracy result accuracy info
+	 */
+	public StateValuesDV(JDDNode dd, Model model, Accuracy accuracy) throws PrismException
+	{
+		// TODO: Enforce/check that dd is zero for all non-reachable states
+		this(new DoubleVector(dd, model.getAllDDRowVars(), model.getODD()), model, accuracy);
 	}
 
 	/** Helper method: Store information about the underlying model */
@@ -114,13 +126,6 @@ public class StateValuesDV implements StateValues
 		numVars = vars.n();
 		odd = model.getODD();
 		varList = model.getVarList();
-
-		// initialise arrays
-		varSizes = new int[varList.getNumVars()];
-		for (int i = 0; i < varList.getNumVars(); i++) {
-			varSizes[i] = varList.getRangeLogTwo(i);
-		}
-		varValues = new int[varList.getNumVars()];
 	}
 
 	@Override
@@ -129,6 +134,12 @@ public class StateValuesDV implements StateValues
 		setModel(newModel);
 	}
 
+	@Override
+	public void setAccuracy(Accuracy accuracy)
+	{
+		this.accuracy = accuracy;
+	}
+	
 	// CONVERSION METHODS
 
 	@Override
@@ -142,7 +153,7 @@ public class StateValuesDV implements StateValues
 	public StateValuesMTBDD convertToStateValuesMTBDD()
 	{
 		// convert to StateValuesMTBDD, destroy (clear) old vector
-		StateValuesMTBDD res = new StateValuesMTBDD(values.convertToMTBDD(vars, odd), model);
+		StateValuesMTBDD res = new StateValuesMTBDD(values.convertToMTBDD(vars, odd), model, accuracy);
 		clear();
 		return res;
 	}
@@ -384,31 +395,17 @@ public class StateValuesDV implements StateValues
 		return values.getBDDFromCloseValueRel(value, epsilon, vars, odd);
 	}
 
+	@Override
+	public Accuracy getAccuracy()
+	{
+		return accuracy;
+	}
+	
 	// PRINTING STUFF
-
-	@Override
-	public void print(PrismLog log) throws PrismException
-	{
-		print(log, true, false, true, true);
-	}
-
-	@Override
-	public void print(PrismLog log, boolean printSparse, boolean printMatlab, boolean printStates) throws PrismException
-	{
-		print(log, printSparse, printMatlab, printStates, true);
-	}
 
 	@Override
 	public void print(PrismLog log, boolean printSparse, boolean printMatlab, boolean printStates, boolean printIndices) throws PrismException
 	{
-		int i;
-
-		// store flags
-		this.printSparse = printSparse;
-		this.printMatlab = printMatlab;
-		this.printStates = printStates;
-		this.printIndices = printIndices;
-
 		// header for matlab format
 		if (printMatlab)
 			log.println(!printSparse ? "v = [" : "v = sparse(" + values.getSize() + ",1);");
@@ -420,87 +417,11 @@ public class StateValuesDV implements StateValues
 		}
 
 		// set up and call recursive print
-		outputLog = log;
-		for (i = 0; i < varList.getNumVars(); i++) {
-			varValues[i] = 0;
-		}
-		currentVar = 0;
-		currentVarLevel = 0;
-		printRec(0, odd, 0);
+		iterate(new StateAndValuePrinter(log, varList, printSparse, printMatlab, printStates, printIndices), printSparse);
 
 		// footer for matlab format
 		if (printMatlab && !printSparse)
 			log.println("];");
-	}
-
-	/**
-	 * Recursive part of print method.
-	 * 
-	 * (NB: this would be very easy - i.e. not even
-	 *  any recursion - if we didn't want to print
-	 *  out the values of the module variables as well
-	 *  which requires traversal of the odd as well
-	 *  as the vector)
-	 * (NB2: traversal of vector/odd is still quite simple;
-	 *  tricky bit is keeping track of variable values
-	 *  throughout traversal - we want to be efficient
-	 *  and not compute the values from scratch each
-	 *  time, but we also want to avoid passing arrays
-	 *  into the recursive method)
-	 */
-	private void printRec(int level, ODDNode o, int n)
-	{
-		double d;
-
-		// base case - at bottom
-		if (level == numVars) {
-			d = values.getElement(n);
-			printLine(n, d);
-			return;
-		}
-		// recurse
-		else {
-			if (o.getEOff() > 0) {
-				currentVarLevel++;
-				if (currentVarLevel == varSizes[currentVar]) {
-					currentVar++;
-					currentVarLevel = 0;
-				}
-				printRec(level + 1, o.getElse(), n);
-				currentVarLevel--;
-				if (currentVarLevel == -1) {
-					currentVar--;
-					currentVarLevel = varSizes[currentVar] - 1;
-				}
-			}
-			if (o.getTOff() > 0) {
-				varValues[currentVar] += (1 << (varSizes[currentVar] - 1 - currentVarLevel));
-				currentVarLevel++;
-				if (currentVarLevel == varSizes[currentVar]) {
-					currentVar++;
-					currentVarLevel = 0;
-				}
-				printRec(level + 1, o.getThen(), (int) (n + o.getEOff()));
-				currentVarLevel--;
-				if (currentVarLevel == -1) {
-					currentVar--;
-					currentVarLevel = varSizes[currentVar] - 1;
-				}
-				varValues[currentVar] -= (1 << (varSizes[currentVar] - 1 - currentVarLevel));
-			}
-		}
-	}
-
-	@Override
-	public void printFiltered(PrismLog log, JDDNode filter) throws PrismException
-	{
-		printFiltered(log, filter, true, false, true, true);
-	}
-
-	@Override
-	public void printFiltered(PrismLog log, JDDNode filter, boolean printSparse, boolean printMatlab, boolean printStates) throws PrismException
-	{
-		printFiltered(log, filter, printSparse, printMatlab, printStates, true);
 	}
 
 	/**
@@ -515,32 +436,15 @@ public class StateValuesDV implements StateValues
 	public void printFiltered(PrismLog log, JDDNode filter, boolean printSparse, boolean printMatlab, boolean printStates, boolean printIndices)
 			throws PrismException
 	{
-		int i;
-
-		// store flags
-		this.printSparse = printSparse;
-		this.printMatlab = printMatlab;
-		this.printStates = printStates;
-		this.printIndices = printIndices;
-
 		// header for matlab format
 		if (printMatlab)
 			log.println(!printSparse ? "v = [" : "v = sparse(" + values.getSize() + ",1);");
 
-		// set up a counter so we can check if there were no non-zero elements
-		counter = 0;
+		StateAndValuePrinter printer = new StateAndValuePrinter(log, varList, printSparse, printMatlab, printStates, printIndices);
+		iterateFiltered(filter, printer, printSparse);
 
-		// set up and call recursive print
-		outputLog = log;
-		for (i = 0; i < varList.getNumVars(); i++) {
-			varValues[i] = 0;
-		}
-		currentVar = 0;
-		currentVarLevel = 0;
-		printFilteredRec(0, odd, 0, filter);
-
-		// check  if all zero
-		if (printSparse && !printMatlab && counter == 0) {
+		// check if all zero
+		if (printSparse && !printMatlab && !printer.hadOutput()) {
 			log.println("(all zero)");
 			return;
 		}
@@ -550,112 +454,195 @@ public class StateValuesDV implements StateValues
 			log.println("];");
 	}
 
-	/**
-	 * Recursive part of printFiltered method.
-	 *
-	 * So we need to traverse filter too.
-	 * See also notes above for printRec. 
-	 */
-	private void printFilteredRec(int level, ODDNode o, int n, JDDNode filter)
+	@Override
+	public void iterate(StateAndValueConsumer consumer, boolean sparse)
 	{
-		double d;
-		JDDNode newFilter;
-
-		// don't print if the filter is zero
-		if (filter.equals(JDD.ZERO)) {
-			return;
-		}
-
-		// base case - at bottom
-		if (level == numVars) {
-			d = values.getElement(n);
-			printLine(n, d);
-			return;
-		}
-		// recurse
-		else {
-			if (o.getEOff() > 0) {
-				currentVarLevel++;
-				if (currentVarLevel == varSizes[currentVar]) {
-					currentVar++;
-					currentVarLevel = 0;
+		if (!sparse) {
+			StateAndValuesIterator it = new StateAndValuesIterator(consumer);
+			it.iterate();
+		} else {
+			StateAndValueConsumer sparseConsumer = (int varValues[], double value, long stateIndex) -> {
+				if (value != 0) {
+					consumer.accept(varValues, value, stateIndex);
 				}
-				JDD.Ref(filter);
-				JDD.Ref(vars.getVar(level));
-				newFilter = JDD.Apply(JDD.TIMES, filter, JDD.Not(vars.getVar(level)));
-				printFilteredRec(level + 1, o.getElse(), n, newFilter);
-				JDD.Deref(newFilter);
-				currentVarLevel--;
-				if (currentVarLevel == -1) {
-					currentVar--;
-					currentVarLevel = varSizes[currentVar] - 1;
-				}
-			}
-			if (o.getTOff() > 0) {
-				varValues[currentVar] += (1 << (varSizes[currentVar] - 1 - currentVarLevel));
-				currentVarLevel++;
-				if (currentVarLevel == varSizes[currentVar]) {
-					currentVar++;
-					currentVarLevel = 0;
-				}
-				JDD.Ref(filter);
-				JDD.Ref(vars.getVar(level));
-				newFilter = JDD.Apply(JDD.TIMES, filter, vars.getVar(level));
-				printFilteredRec(level + 1, o.getThen(), (int) (n + o.getEOff()), newFilter);
-				JDD.Deref(newFilter);
-				currentVarLevel--;
-				if (currentVarLevel == -1) {
-					currentVar--;
-					currentVarLevel = varSizes[currentVar] - 1;
-				}
-				varValues[currentVar] -= (1 << (varSizes[currentVar] - 1 - currentVarLevel));
-			}
+			};
+			StateAndValuesIterator it = new StateAndValuesIterator(sparseConsumer);
+			it.iterate();
 		}
 	}
 
-	private void printLine(int n, double d)
+	@Override
+	public void iterateFiltered(JDDNode filter, StateAndValueConsumer consumer, boolean sparse)
 	{
-		int i, j;
-		// increment counter (used in printFiltered)
-		if (d > 0)
-			counter++;
-		// do printing
-		if (!printSparse || d != 0) {
-			if (printMatlab) {
-				if (printSparse) {
-					outputLog.println("v(" + (n + 1) + ")=" + d + ";");
-				} else {
-					outputLog.println(d);
-				}
-			} else {
-				if (printIndices) {
-					outputLog.print(n);
-				}
-				if (printStates) {
-					outputLog.print(":");
-					outputLog.print("(");
-					j = varList.getNumVars();
-					for (i = 0; i < j; i++) {
-						// integer variable
-						if (varList.getType(i) instanceof TypeInt) {
-							outputLog.print(varValues[i] + varList.getLow(i));
-						}
-						// boolean variable
-						else {
-							outputLog.print(varValues[i] == 1);
-						}
-						if (i < j - 1)
-							outputLog.print(",");
-					}
-					outputLog.print(")");
-				}
-				if (printIndices || printStates)
-					outputLog.print("=");
-				outputLog.println(d);
-			}
-			//return true;
+		if (!sparse) {
+			StateAndValuesIterator it = new StateAndValuesIterator(consumer);
+			it.iterateFiltered(filter);
 		} else {
-			//return false;
+			StateAndValueConsumer sparseConsumer = (int varValues[], double value, long stateIndex) -> {
+				if (value != 0) {
+					consumer.accept(varValues, value, stateIndex);
+				}
+			};
+			StateAndValuesIterator it = new StateAndValuesIterator(sparseConsumer);
+			it.iterateFiltered(filter);
+		}
+	}
+
+	private class StateAndValuesIterator {
+		private int[] varSizes;
+		private int[] varValues;
+		private int currentVar;
+		private int currentVarLevel;
+
+		private StateAndValueConsumer consumer;
+
+		public StateAndValuesIterator(StateAndValueConsumer consumer)
+		{
+			this.consumer = consumer;
+
+			varValues = new int[varList.getNumVars()];
+			for (int i = 0; i < varList.getNumVars(); i++) {
+				varValues[i] =  varList.getLow(i);
+			}
+
+			varSizes = new int[varList.getNumVars()];
+			for (int i = 0; i < varList.getNumVars(); i++) {
+				varSizes[i] = varList.getRangeLogTwo(i);
+			}
+
+			currentVar = 0;
+			currentVarLevel = 0;
+		}
+
+		public void iterate()
+		{
+			iterateRec(0, odd, 0);
+		}
+
+		public void iterateFiltered(JDDNode filter)
+		{
+			iterateRecFiltered(0, odd, 0, filter);
+		}
+
+		/**
+		 * Recursive part of state/value iteration.
+		 *
+		 * (NB: this would be very easy - i.e. not even
+		 *  any recursion - if we didn't want to print
+		 *  out the values of the module variables as well
+		 *  which requires traversal of the odd as well
+		 *  as the vector)
+		 * (NB2: traversal of vector/odd is still quite simple;
+		 *  tricky bit is keeping track of variable values
+		 *  throughout traversal - we want to be efficient
+		 *  and not compute the values from scratch each
+		 *  time, but we also want to avoid passing arrays
+		 *  into the recursive method)
+		 */
+		private void iterateRec(int level, ODDNode o, int n)
+		{
+			double d;
+
+			// base case - at bottom
+			if (level == numVars) {
+				d = values.getElement(n);
+				consumer.accept(varValues, d, n);
+				return;
+			}
+			// recurse
+			else {
+				if (o.getEOff() > 0) {
+					currentVarLevel++;
+					if (currentVarLevel == varSizes[currentVar]) {
+						currentVar++;
+						currentVarLevel = 0;
+					}
+					iterateRec(level + 1, o.getElse(), n);
+					currentVarLevel--;
+					if (currentVarLevel == -1) {
+						currentVar--;
+						currentVarLevel = varSizes[currentVar] - 1;
+					}
+				}
+				if (o.getTOff() > 0) {
+					varValues[currentVar] += (1 << (varSizes[currentVar] - 1 - currentVarLevel));
+					currentVarLevel++;
+					if (currentVarLevel == varSizes[currentVar]) {
+						currentVar++;
+						currentVarLevel = 0;
+					}
+					iterateRec(level + 1, o.getThen(), (int) (n + o.getEOff()));
+					currentVarLevel--;
+					if (currentVarLevel == -1) {
+						currentVar--;
+						currentVarLevel = varSizes[currentVar] - 1;
+					}
+					varValues[currentVar] -= (1 << (varSizes[currentVar] - 1 - currentVarLevel));
+				}
+			}
+		}
+
+		/**
+		 * Recursive part of filtered state/value iteration.
+		 *
+		 * So we need to traverse filter too.
+		 * See also notes above for iterateRec.
+		 */
+		private void iterateRecFiltered(int level, ODDNode o, int n, JDDNode filter)
+		{
+			double d;
+			JDDNode newFilter;
+
+			// skip if the filter is zero
+			if (filter.equals(JDD.ZERO)) {
+				return;
+			}
+
+			// base case - at bottom
+			if (level == numVars) {
+				d = values.getElement(n);
+				consumer.accept(varValues, d, n);
+				return;
+			}
+			// recurse
+			else {
+				if (o.getEOff() > 0) {
+					currentVarLevel++;
+					if (currentVarLevel == varSizes[currentVar]) {
+						currentVar++;
+						currentVarLevel = 0;
+					}
+					JDD.Ref(filter);
+					JDD.Ref(vars.getVar(level));
+					newFilter = JDD.Apply(JDD.TIMES, filter, JDD.Not(vars.getVar(level)));
+					iterateRecFiltered(level + 1, o.getElse(), n, newFilter);
+					JDD.Deref(newFilter);
+					currentVarLevel--;
+					if (currentVarLevel == -1) {
+						currentVar--;
+						currentVarLevel = varSizes[currentVar] - 1;
+					}
+				}
+				if (o.getTOff() > 0) {
+					varValues[currentVar] += (1 << (varSizes[currentVar] - 1 - currentVarLevel));
+					currentVarLevel++;
+					if (currentVarLevel == varSizes[currentVar]) {
+						currentVar++;
+						currentVarLevel = 0;
+					}
+					JDD.Ref(filter);
+					JDD.Ref(vars.getVar(level));
+					newFilter = JDD.Apply(JDD.TIMES, filter, vars.getVar(level));
+					iterateRecFiltered(level + 1, o.getThen(), (int) (n + o.getEOff()), newFilter);
+					JDD.Deref(newFilter);
+					currentVarLevel--;
+					if (currentVarLevel == -1) {
+						currentVar--;
+						currentVarLevel = varSizes[currentVar] - 1;
+					}
+					varValues[currentVar] -= (1 << (varSizes[currentVar] - 1 - currentVarLevel));
+				}
+			}
 		}
 	}
 
@@ -666,6 +653,6 @@ public class StateValuesDV implements StateValues
 		DoubleVector dv = new DoubleVector(values.getSize());
 		dv.add(values);
 		// Return copy
-		return new StateValuesDV(dv, model);
+		return new StateValuesDV(dv, model, accuracy);
 	}
 }

@@ -222,6 +222,7 @@ jboolean min				// min or max probabilities (true = min, false = max)
 	std::unique_ptr<ExportIterations> iterationExport;
 	if (PS_GetFlagExportIterations()) {
 		iterationExport.reset(new ExportIterations("PS_NondetReachReward"));
+		PS_PrintToMainLog(env, "Exporting iterations to %s\n", iterationExport->getFileName().c_str());
 		iterationExport->exportVector(soln, n, 0);
 	}
 
@@ -402,6 +403,10 @@ jboolean min				// min or max probabilities (true = min, false = max)
 		fclose(fp_adv);
 		PS_PrintToMainLog(env, "\nAdversary written to file \"%s\".\n", export_adv_filename);
 	}
+	
+	// the difference between vector values is not a reliable error bound
+	// but we store it anyway in case it is useful for estimating a bound
+	last_error_bound = measure.value();
 	
 	// catch exceptions: register error, free memory
 	} catch (std::bad_alloc e) {

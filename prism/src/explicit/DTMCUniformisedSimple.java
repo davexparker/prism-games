@@ -26,6 +26,7 @@
 
 package explicit;
 
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Iterator;
 import java.util.List;
@@ -34,7 +35,6 @@ import java.util.Map.Entry;
 
 import parser.State;
 import parser.Values;
-import prism.ModelType;
 import prism.PrismException;
 import prism.PrismNotSupportedException;
 import explicit.rewards.MCRewards;
@@ -42,6 +42,10 @@ import explicit.rewards.MCRewards;
 /**
 * Simple explicit-state representation of a DTMC, constructed (implicitly) as the uniformised DTMC of a CTMC.
 * This class is read-only: most of data is pointers to other model info.
+* <br>
+* Note: This implicitly constructed DTMC does not provide implementations for
+* all methods of a full DTMCExplicit model. See {@link CTMCSimple#buildUniformisedDTMC} for
+* a method to obtain an explicit uniformised DTMC.
 */
 public class DTMCUniformisedSimple extends DTMCExplicit
 {
@@ -84,11 +88,6 @@ public class DTMCUniformisedSimple extends DTMCExplicit
 	
 	// Accessors (for Model)
 
-	public ModelType getModelType()
-	{
-		return ModelType.DTMC;
-	}
-
 	public int getNumStates()
 	{
 		return ctmc.getNumStates();
@@ -114,6 +113,31 @@ public class DTMCUniformisedSimple extends DTMCExplicit
 		return ctmc.isInitialState(i);
 	}
 
+	@Override
+	public int getNumDeadlockStates()
+	{
+		return ctmc.getNumDeadlockStates();
+	}
+
+	@Override
+	public Iterable<Integer> getDeadlockStates()
+	{
+		return ctmc.getDeadlockStates();
+	}
+
+	@Override
+	public StateValues getDeadlockStatesList()
+	{
+		return ctmc.getDeadlockStatesList();
+	}
+
+	@Override
+	public int getFirstDeadlockState()
+	{
+		return ctmc.getFirstDeadlockState();
+	}
+
+	@Override
 	public boolean isDeadlockState(int i)
 	{
 		return ctmc.isDeadlockState(i);
@@ -132,6 +156,12 @@ public class DTMCUniformisedSimple extends DTMCExplicit
 	public int getNumTransitions()
 	{
 		return ctmc.getNumTransitions() + numExtraTransitions;
+	}
+
+	public int getNumTransitions(int s)
+	{
+		// TODO
+		throw new RuntimeException("Not implemented yet");
 	}
 
 	public SuccessorsIterator getSuccessors(final int s)
@@ -180,12 +210,6 @@ public class DTMCUniformisedSimple extends DTMCExplicit
 	}
 
 	// Accessors (for DTMC)
-
-	public int getNumTransitions(int s)
-	{
-		// TODO
-		throw new RuntimeException("Not implemented yet");
-	}
 
 	public Iterator<Entry<Integer,Double>> getTransitionsIterator(int s)
 	{
@@ -252,29 +276,23 @@ public class DTMCUniformisedSimple extends DTMCExplicit
 	@Override
 	public void vmMult(double vect[], double result[])
 	{
-		int i, j;
-		double prob, sum;
-		Distribution distr;
-		
 		// Initialise result to 0
-		for (j = 0; j < numStates; j++) {
-			result[j] = 0;
-		}
+		Arrays.fill(result, 0);
 		// Go through matrix elements (by row)
-		for (i = 0; i < numStates; i++) {
-			distr = ctmc.getTransitions(i);
-			sum = 0.0;
-			for (Map.Entry<Integer, Double> e : distr) {
-				j = (Integer) e.getKey();
-				prob = (Double) e.getValue();
+		for (int state = 0; state < numStates; state++) {
+			double sum = 0.0;
+			for (Iterator<Entry<Integer, Double>> transitions = ctmc.getTransitionsIterator(state); transitions.hasNext();) {
+				Entry<Integer, Double> trans = transitions.next();
+				int target  = trans.getKey();
+				double prob = trans.getValue() / q;
 				// Non-diagonal entries only
-				if (j != i) {
+				if (target != state) {
 					sum += prob;
-					result[j] += (prob / q) * vect[i];
+					result[target] += prob * vect[state];
 				}
 			}
-			// Diagonal entry is 1 - sum/q
-			result[i] += (1 - sum / q) * vect[i];
+			// Diagonal entry is 1 - sum
+			result[state] += (1 - sum) * vect[state];
 		}
 	}
 

@@ -102,14 +102,12 @@ import prism.PrismSettingsListener;
 import prism.TileList;
 import prism.UndefinedConstants;
 import strat.StochasticUpdateStrategy;
-import strat.StochasticUpdateStrategyProduct;
 import strat.Strategies;
 import userinterface.GUIClipboardEvent;
 import userinterface.GUIConstantsPicker;
 import userinterface.GUIPlugin;
 import userinterface.GUIPrism;
 import userinterface.GUISimulationPicker;
-import userinterface.OptionsPanel;
 import userinterface.SimulationInformation;
 import userinterface.graph.Graph;
 import userinterface.graph.Graph.SeriesKey;
@@ -324,10 +322,13 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 		verifyAfterReceiveParseNotification = false;
 
 		try {
+			// are we in exact mode?
+			boolean exact = getPrism().getSettings().getBoolean(PrismSettings.PRISM_EXACT_ENABLED);
+
 			// Get valid/selected properties
 			String propertiesString = getLabelsString() + "\n" + getConstantsString() + "\n" + propList.getValidSelectedAndReferencedString();
 			// Get PropertiesFile for valid/selected properties
-			parsedProperties = getPrism().parsePropertiesString(parsedModel, propertiesString);
+			parsedProperties = getPrism().parsePropertiesString(propertiesString);
 			// And get list of corresponding GUIProperty objects
 			validGUIProperties = propList.getValidSelectedProperties();
 			// Query user for undefined constant values (if required)
@@ -336,6 +337,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 			for (int i = 0; i < n; i++)
 				validProperties.add(parsedProperties.getPropertyObject(i));
 			uCon = new UndefinedConstants(parsedModel, parsedProperties, validProperties);
+			uCon.setExactMode(exact);
 			if (uCon.getMFNumUndefined() + uCon.getPFNumUndefined() > 0) {
 				// Use previous constant values as defaults in dialog
 				int result = GUIConstantsPicker.defineConstantsWithDialog(this.getGUI(), uCon, mfConstants, pfConstants);
@@ -345,8 +347,8 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 			// Store model/property constants
 			mfConstants = uCon.getMFConstantValues();
 			pfConstants = uCon.getPFConstantValues();
-			getPrism().setPRISMModelConstants(mfConstants);
-			parsedProperties.setSomeUndefinedConstants(pfConstants);
+			getPrism().setPRISMModelConstants(mfConstants, exact);
+			parsedProperties.setSomeUndefinedConstants(pfConstants, exact);
 			// Store properties to be verified
 			propertiesToBeVerified = validGUIProperties;
 			for (GUIProperty gp : propertiesToBeVerified)
@@ -368,7 +370,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 		ArrayList<Expression> simulatableExprs;
 		UndefinedConstants uCon;
 		try {
-			parsedProperties = getPrism().parsePropertiesString(parsedModel,
+			parsedProperties = getPrism().parsePropertiesString(
 					getLabelsString() + "\n" + getConstantsString() + "\n" + propList.getValidSelectedAndReferencedString());
 			validGUIProperties = propList.getValidSelectedProperties();
 			if (validGUIProperties.size() == 0) {
@@ -416,8 +418,9 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 			// Store model/property constants
 			mfConstants = uCon.getMFConstantValues();
 			pfConstants = uCon.getPFConstantValues();
-			getPrism().setPRISMModelConstants(mfConstants);
-			parsedProperties.setSomeUndefinedConstants(pfConstants);
+			// currently, evaluate constants non-exact for simulation
+			getPrism().setPRISMModelConstants(mfConstants, false);
+			parsedProperties.setSomeUndefinedConstants(pfConstants, false);
 			for (GUIProperty gp : simulatableGUIProperties)
 				gp.setConstants(mfConstants, pfConstants);
 
@@ -461,7 +464,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 			}*/
 
 			// parse property to be used for experiment
-			parsedProperties = getPrism().parsePropertiesString(parsedModel,
+			parsedProperties = getPrism().parsePropertiesString(
 					getLabelsString() + "\n" + getConstantsString() + "\n" + propList.getValidSelectedAndReferencedString());
 			if (parsedProperties.getNumProperties() <= 0) {
 				error("There are no properties selected");
@@ -488,6 +491,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 
 		// sort out undefined constants
 		UndefinedConstants uCon = new UndefinedConstants(parsedModel, parsedProperties, props);
+		uCon.setExactMode(getPrism().getSettings().getBoolean(PrismSettings.PRISM_EXACT_ENABLED));
 		boolean showGraphDialog = false;
 		boolean useSimulation = false;
 		if (uCon.getMFNumUndefined() + uCon.getPFNumUndefined() == 0) {
@@ -785,6 +789,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 		propList.deleteAll();
 		consTable.newList();
 		labTable.newList();
+		tabToFront();
 		setModified(false);
 		setActiveFile(null);
 		doEnables();
@@ -802,7 +807,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 				error("No file selected");
 				return;
 			}
-			Thread t = new LoadPropertiesThread(this, parsedModel, file);
+			Thread t = new LoadPropertiesThread(this, file);
 			t.setPriority(Thread.NORM_PRIORITY);
 			t.start();
 		}
@@ -889,7 +894,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 				error("No file selected");
 				return;
 			}
-			Thread t = new LoadPropertiesThread(this, parsedModel, file, true);
+			Thread t = new LoadPropertiesThread(this, file, true);
 			t.setPriority(Thread.NORM_PRIORITY);
 			t.start();
 		} else {
@@ -954,8 +959,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 		// check if strategy implementation is enabled
 		if (getPrism().getSettings().getBoolean(PrismSettings.PRISM_IMPLEMENT_STRATEGY) && getPrism().getStrategy() != null) {
 		    // check if strategy is stochastic memory update
-		    if(getPrism().getStrategy() instanceof StochasticUpdateStrategy ||
-		       getPrism().getStrategy() instanceof StochasticUpdateStrategyProduct) {
+		    if (getPrism().getStrategy() instanceof StochasticUpdateStrategy) {
 			JOptionPane.showMessageDialog(this, "Cannot verify under a stochastic update strategy.", "Operation not supported.", JOptionPane.ERROR_MESSAGE);
 			return;
 		    }
@@ -1192,7 +1196,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 
 	public void a_newProperty()
 	{
-		GUIPropertyEditor ed = new GUIPropertyEditor(this, parsedModel, getInvalidPropertyStrategy());
+		GUIPropertyEditor ed = new GUIPropertyEditor(this, getInvalidPropertyStrategy());
 		ed.show();
 	}
 
@@ -1206,7 +1210,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 				gp.setBeingEdited(true);
 				// Force repaint because we modified the GUIProperty directly
 				repaintList();
-				GUIPropertyEditor ed = new GUIPropertyEditor(this, parsedModel, gp, getInvalidPropertyStrategy());
+				GUIPropertyEditor ed = new GUIPropertyEditor(this, gp, getInvalidPropertyStrategy());
 				ed.show();
 			}
 		}
@@ -1283,7 +1287,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 		exportLabelsAfterReceiveParseNotification = false;
 		try {
 			// Parse labels/constants
-			parsedProperties = getPrism().parsePropertiesString(parsedModel, getLabelsString() + "\n" + getConstantsString());
+			parsedProperties = getPrism().parsePropertiesString(getLabelsString() + "\n" + getConstantsString());
 			// Query user for undefined constant values (if required)
 			UndefinedConstants uCon = new UndefinedConstants(parsedModel, parsedProperties, true);
 			if (uCon.getMFNumUndefined() + uCon.getPFNumUndefined() > 0) {
@@ -1295,8 +1299,9 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 			// Store model/property constants
 			mfConstants = uCon.getMFConstantValues();
 			pfConstants = uCon.getPFConstantValues();
-			getPrism().setPRISMModelConstants(mfConstants);
-			parsedProperties.setSomeUndefinedConstants(pfConstants);
+			// currently, evaluate constants non-exact for model building
+			getPrism().setPRISMModelConstants(mfConstants, false);
+			parsedProperties.setSomeUndefinedConstants(pfConstants, false);
 			// If export is being done to log, switch view to log
 			if (exportFile == null)
 				logToFront();
@@ -1509,11 +1514,6 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 		return propMenu;
 	}
 
-	public OptionsPanel getOptions()
-	{
-		return null;
-	}
-
 	public String getTabText()
 	{
 		return "Properties";
@@ -1631,7 +1631,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 	private void checkForPropertiesToLoad()
 	{
 		if (argsPropertiesFile != null) {
-			Thread t = new LoadPropertiesThread(this, parsedModel, new File(argsPropertiesFile));
+			Thread t = new LoadPropertiesThread(this, new File(argsPropertiesFile));
 			t.setPriority(Thread.NORM_PRIORITY);
 			t.start();
 			//we clear the variable to avoid loading property file every time a model is parsed.
@@ -1666,6 +1666,16 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 					} else {
 						// there is no property yet, open new property editor
 						a_newProperty();
+					}
+				} else if (e.getSource() == consTable || e.getSource() == constantsScroll) {
+					if (consTable.rowAtPoint(e.getPoint()) == -1) {
+						// double-click, not an existing row -> add a new constant
+						a_addConstant();
+					}
+				} else if (e.getSource() == labTable || e.getSource() == labelsScroll) {
+					if (labTable.rowAtPoint(e.getPoint()) == -1) {
+						// double-click, not an existing row -> add a new label
+						a_addLabel();
 					}
 				}
 			}
@@ -1931,6 +1941,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 							propList = new GUIPropertiesList(getPrism(), this);
 							propList.addListSelectionListener(this);
 							propList.addContainerListener(this);
+							propList.setToolTipText("Double-click or right-click here to create a new property");
 							propScroll.setViewportView(propList);
 						}
 						JScrollPane comScroll = new JScrollPane();
@@ -1951,6 +1962,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 					JSplitPane bottomLeft = new JSplitPane();
 					{
 						constantsScroll = new JScrollPane();
+						constantsScroll.setToolTipText("Double-click or right-click here to create a new constant");
 						{
 							consTable = new GUIPropConstantList(this);
 							consTable.setBackground(Color.white);
@@ -1960,6 +1972,7 @@ public class GUIMultiProperties extends GUIPlugin implements MouseListener, List
 							constantsScroll.setBorder(new TitledBorder("Constants"));
 						}
 						labelsScroll = new JScrollPane();
+						labelsScroll.setToolTipText("Double-click or right-click here to create a new label");
 						{
 							labTable = new GUIPropLabelList(this);
 							labTable.setBackground(Color.white);

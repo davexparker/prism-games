@@ -1,0 +1,13 @@
+const int K = 20;
+
+// RESULT (p=0.1): 0.1
+<<r>>Pmax=? [ F "gains_information" ]
+
+// RESULT (p=0.1): 0.1
+<<o,r>>Pmax=? [ F "gains_information" ]
+
+// RESULT (p=0.1): 0.1
+<<r>>Pmax=? [ F<=K "gains_information" ]
+
+// RESULT (p=0.1): 0.1
+<<o,r>>Pmax=? [ F<=K "gains_information" ]

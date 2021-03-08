@@ -1,7 +1,9 @@
 package simulator;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import param.Function;
 import param.FunctionFactory;
@@ -11,20 +13,29 @@ import parser.State;
 import parser.Values;
 import parser.VarList;
 import parser.ast.ConstantList;
+import parser.ast.DeclarationType;
 import parser.ast.Expression;
 import parser.ast.LabelList;
 import parser.ast.ModulesFile;
-import parser.ast.Player;
 import parser.ast.RewardStruct;
 import parser.type.Type;
-import prism.DefaultModelGenerator;
 import prism.ModelGeneratorSymbolic;
 import prism.ModelType;
 import prism.PrismComponent;
 import prism.PrismException;
 import prism.PrismLangException;
+import prism.RewardGenerator;
 
-public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator implements ModelGeneratorSymbolic
+/**
+ * A variant of ModulesFileGenerator that is suitable for model generation
+ * at a symbolic level, i.e., where numeric values are kept as expressions
+ * instead of being evaluated.
+ * <br>
+ * Used by the parametric / exact engine to build models.
+ * <br>
+ * Uses exact arithmetic to evaluate the various expressions in a model description.
+ */
+public class ModulesFileModelGeneratorSymbolic implements ModelGeneratorSymbolic, RewardGenerator
 {
 	// Parent PrismComponent (logs, settings etc.)
 	protected PrismComponent parent;
@@ -59,6 +70,7 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 	
 	/**
 	 * Build a ModulesFileModelGenerator for a particular PRISM model, represented by a ModuleFile instance.
+	 * Throw an explanatory exception if this is not possible.
 	 * @param modulesFile The PRISM model
 	 */
 	public ModulesFileModelGeneratorSymbolic(ModulesFile modulesFile) throws PrismException
@@ -68,19 +80,20 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 	
 	/**
 	 * Build a ModulesFileModelGenerator for a particular PRISM model, represented by a ModuleFile instance.
+	 * Throw an explanatory exception if this is not possible.
 	 * @param modulesFile The PRISM model
 	 */
 	public ModulesFileModelGeneratorSymbolic(ModulesFile modulesFile, PrismComponent parent) throws PrismException
 	{
 		this.parent = parent;
 		
-		// No support for PTAs yet
-		if (modulesFile.getModelType() == ModelType.PTA) {
-			throw new PrismException("Sorry - the simulator does not currently support PTAs");
+		// No support for PTA (and similar) models yet
+		if (modulesFile.getModelType() == ModelType.PTA || modulesFile.getModelType() == ModelType.TPTG) {
+			throw new PrismException(modulesFile.getModelType() + "s are not currently supported");
 		}
 		// No support for system...endsystem yet
 		if (modulesFile.getSystemDefn() != null) {
-			throw new PrismException("Sorry - the simulator does not currently handle the system...endsystem construct");
+			throw new PrismException("The system...endsystem construct is not currently supported");
 		}
 		
 		// Store basic model info
@@ -100,7 +113,7 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 	 * (Re-)Initialise the class ready for model exploration
 	 * (can only be done once any constants needed have been provided)
 	 */
-	private void initialise() throws PrismLangException
+	private void initialise() throws PrismException
 	{
 		// Evaluate constants on (a copy) of the modules file, insert constant values
 		// Note that we don't optimise expressions since this can create some round-off issues
@@ -136,9 +149,15 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 	{
 		return modelType;
 	}
-	
+
 	@Override
 	public void setSomeUndefinedConstants(Values someValues) throws PrismException
+	{
+		setSomeUndefinedConstants(someValues, false);
+	}
+
+	@Override
+	public void setSomeUndefinedConstants(Values someValues, boolean exact) throws PrismException
 	{
 		// We start again with a copy of the original modules file
 		// and set the constants in the copy.
@@ -147,7 +166,7 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 		// start again at a place where references to constants have not
 		// yet been replaced.
 		modulesFile = (ModulesFile) originalModulesFile.deepCopy();
-		modulesFile.setSomeUndefinedConstants(someValues);
+		modulesFile.setSomeUndefinedConstants(someValues, exact);
 		mfConstants = modulesFile.getConstantValues();
 		initialise();
 	}
@@ -182,12 +201,47 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 		return modulesFile.getVarTypes();
 	}
 
+	public DeclarationType getVarDeclarationType(int i) throws PrismException
+	{
+		return modulesFile.getVarDeclarationType(i);
+	}
+	
+	@Override
+	public int getVarModuleIndex(int i)
+	{
+		return modulesFile.getVarModuleIndex(i);
+	}
+	
+	@Override
+	public String getModuleName(int i)
+	{
+		return modulesFile.getModuleName(i);
+	}
+	
+	@Override
+	public VarList createVarList() throws PrismException
+	{
+		return varList;
+	}
+	
+	@Override
+	public List<Object> getActions()
+	{
+		return modulesFile.getActions();
+	}
+
 	@Override
 	public int getNumLabels()
 	{
 		return labelList.size();	
 	}
 
+	@Override
+	public String getActionStringDescription()
+	{
+		return "Module/[action]";
+	}
+	
 	@Override
 	public List<String> getLabelNames()
 	{
@@ -207,41 +261,11 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 	}
 	
 	@Override
-	public int getNumRewardStructs()
+	public List<String> getPlayerNames()
 	{
-		return modulesFile.getNumRewardStructs();
-	}
-	
-	@Override
-	public List<String> getRewardStructNames()
-	{
-		return modulesFile.getRewardStructNames();
-	}
-	
-	@Override
-	public int getRewardStructIndex(String name)
-	{
-		return modulesFile.getRewardStructIndex(name);
-	}
-	
-	@Override
-	public RewardStruct getRewardStruct(int i)
-	{
-		return modulesFile.getRewardStruct(i);
+		return modulesFile.getPlayerNames();
 	}
 
-	@Override
-	public int getNumPlayers()
-	{
-		return modulesFile.getNumPlayers();
-	}
-
-	@Override
-	public Player getPlayer(int i)
-	{
-		return modulesFile.getPlayer(i);
-	}
-	
 	// Methods for ModelGenerator interface
 	
 	@Override
@@ -254,7 +278,8 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 	public State getInitialState() throws PrismException
 	{
 		if (modulesFile.getInitialStates() == null) {
-			return modulesFile.getDefaultInitialState();
+			// get initial state, using exact evaluation
+			return modulesFile.getDefaultInitialState(true);
 		} else {
 			// Inefficient but probably won't be called
 			return getInitialStates().get(0);
@@ -267,7 +292,8 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 		List<State> initStates = new ArrayList<State>();
 		// Easy (normal) case: just one initial state
 		if (modulesFile.getInitialStates() == null) {
-			State state = modulesFile.getDefaultInitialState();
+			// get initial state, using exact evaluation
+			State state = modulesFile.getDefaultInitialState(true);
 			initStates.add(state);
 		}
 		// Otherwise, there may be multiple initial states
@@ -276,7 +302,7 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 			Expression init = modulesFile.getInitialStates();
 			List<State> allPossStates = varList.getAllStates();
 			for (State possState : allPossStates) {
-				if (init.evaluateBoolean(modulesFile.getConstantValues(), possState)) {
+				if (init.evaluateExact(modulesFile.getConstantValues(), possState).toBoolean()) {
 					initStates.add(possState);
 				}
 			}
@@ -292,10 +318,55 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 	}
 	
 	@Override
-	public State getExploreState()
-	{
-		return exploreState;
-	}
+    public int getPlayerOwningState() throws PrismException
+    {
+		// Turn-based games only
+		if (modelType.concurrent()) {
+			return -1;
+		}
+		// Determine which player owns the state
+		int player = -1;
+		param.TransitionList transitions = getTransitionList();
+		int nc = getNumChoices();
+		for (int i = 0; i < nc; i++) {
+			String modAct = transitions.getTransitionModuleOrAction(transitions.getTotalIndexOfTransition(i, 0));
+			int iPlayer = modulesFile.getPlayerForModuleOrAction(modAct);
+			if (player != -1 && iPlayer != -1 && iPlayer != player) {
+				throw new PrismException("Choices for both player " + (player + 1) + " and " + (iPlayer + 1) + " in state " + exploreState);
+			}
+			if (iPlayer != -1) {
+				player = iPlayer;
+			}
+		}
+		// Assign deadlock states to player 1
+		if (nc == 0) {
+			player = 0;
+		}
+		// No assigned player: only allowed when the state is deterministic (one choice)
+		// (in which case, assign the state to player 1)
+		if (player == -1) {
+			if (nc == 1) {
+				player = 0;
+			}
+			// Otherwise, it's an error
+			else {
+				Set<String> acts = new HashSet<>();
+				for (int i = 0; i < nc; i++) {
+					String modAct = transitions.getTransitionModuleOrAction(transitions.getTotalIndexOfTransition(i, 0));
+					if (modulesFile.getPlayerForModuleOrAction(modAct) == -1) {
+						acts.add(getChoiceAction(i).toString());
+					}
+				}
+				String errMsg = "There are multiple choices (" + String.join(",", acts) +  ") in state " + exploreState + " not assigned to any player"; 
+				throw new PrismException(errMsg);
+			}
+		}
+		// Make sure a valid player owns the state
+		if (player < 0 || player >= getNumPlayers()) {
+			throw new PrismException("State " + exploreState + " owned by invalid player (" + (player + 1) + ")");
+		}
+		return player;
+    }
 	
 	@Override
 	public int getNumChoices() throws PrismException
@@ -310,28 +381,47 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 	}
 
 	@Override
-	public int getNumTransitions(int index) throws PrismException
+	public int getNumTransitions(int i) throws PrismException
 	{
-		return getTransitionList().getChoice(index).size();
+		return getTransitionList().getChoice(i).size();
 	}
 
 	@Override
-	public String getTransitionAction(int index) throws PrismException
+	public int getChoiceIndexOfTransition(int index) throws PrismException
 	{
-		int a = getTransitionList().getTransitionModuleOrActionIndex(index);
-		return a < 0 ? null : modulesFile.getSynch(a - 1);
+		return getTransitionList().getChoiceIndexOfTransition(index);
 	}
-
+	
 	@Override
-	public String getTransitionAction(int index, int offset) throws PrismException
+	public int getChoiceOffsetOfTransition(int index) throws PrismException
+	{
+		return getTransitionList().getChoiceOffsetOfTransition(index);
+	}
+	
+	@Override
+	public int getTotalIndexOfTransition(int i, int offset) throws PrismException
+	{
+		return getTransitionList().getTotalIndexOfTransition(i, offset);
+	}
+	
+	@Override
+	public Object getTransitionAction(int i, int offset) throws PrismException
 	{
 		param.TransitionList transitions = getTransitionList();
-		int a = transitions.getTransitionModuleOrActionIndex(transitions.getTotalIndexOfTransition(index, offset));
+		int a = transitions.getTransitionModuleOrActionIndex(transitions.getTotalIndexOfTransition(i, offset));
 		return a < 0 ? null : modulesFile.getSynch(a - 1);
 	}
 
 	@Override
-	public String getChoiceAction(int index) throws PrismException
+	public String getTransitionActionString(int i, int offset) throws PrismException
+	{
+		param.TransitionList transitions = getTransitionList();
+		int a = transitions.getTransitionModuleOrActionIndex(transitions.getTotalIndexOfTransition(i, offset));
+		return getDescriptionForModuleOrActionIndex(a);
+	}
+	
+	@Override
+	public Object getChoiceAction(int index) throws PrismException
 	{
 		param.TransitionList transitions = getTransitionList();
 		int a = transitions.getChoiceModuleOrActionIndex(index);
@@ -339,42 +429,83 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 	}
 
 	@Override
-	public double getTransitionProbability(int index, int offset) throws PrismException
+	public String getChoiceActionString(int index) throws PrismException
 	{
-		throw new UnsupportedOperationException();
-		/*param.TransitionList transitions = getTransitionList();
-		return transitions.getChoice(index).getProbability(offset);*/
+		param.TransitionList transitions = getTransitionList();
+		int a = transitions.getChoiceModuleOrActionIndex(index);
+		return getDescriptionForModuleOrActionIndex(a);
 	}
 
-	//@Override
-	public double getTransitionProbability(int index) throws PrismException
+	/**
+	 * Utility method to get a description for an action label:
+	 * "[a]" for a synchronous action a and "M" for an unlabelled
+	 * action belonging to a module M. Takes in an integer index:
+	 * -i for independent in ith module, i for synchronous on ith action
+	 * (in both cases, modules/actions are 1-indexed) 
+	 */ 
+	private String getDescriptionForModuleOrActionIndex(int a)
+	{
+		if (a < 0) {
+			return modulesFile.getModuleName(-a - 1);
+		} else if (a > 0) {
+			return "[" + modulesFile.getSynchs().get(a - 1) + "]";
+		} else {
+			return "?";
+		}
+	}
+	
+	@Override
+	public double getTransitionProbability(int i, int offset) throws PrismException
 	{
 		throw new UnsupportedOperationException();
 		/*param.TransitionList transitions = getTransitionList();
-		return transitions.getTransitionProbability(index);*/
+		return transitions.getChoice(i).getProbability(offset);*/
 	}
 
 	@Override
-	public Function getTransitionProbabilityFunction(int index, int offset) throws PrismException
+	public Function getTransitionProbabilityFunction(int i, int offset) throws PrismException
 	{
 		param.TransitionList transitions = getTransitionList();
-		return transitions.getChoice(index).getProbability(offset);
+		return transitions.getChoice(i).getProbability(offset);
 	}
 
+	@Override
+	public double getChoiceProbabilitySum(int i) throws PrismException
+	{
+		throw new UnsupportedOperationException();
+		/*param.TransitionList transitions = getTransitionList();
+		return transitions.getChoice(i).getProbabilitySum();*/
+	}
+	
+	@Override
+	public double getProbabilitySum() throws PrismException
+	{
+		throw new UnsupportedOperationException();
+		/*param.TransitionList transitions = getTransitionList();
+		return transitions.getProbabilitySum();*/
+	}
+	
+	@Override
+	public String getTransitionUpdateString(int i, int offset) throws PrismException
+	{
+		param.TransitionList transitions = getTransitionList();
+		return transitions.getTransitionUpdateString(transitions.getTotalIndexOfTransition(i, offset), exploreState);
+	}
+	
+	@Override
+	public String getTransitionUpdateStringFull(int i, int offset) throws PrismException
+	{
+		param.TransitionList transitions = getTransitionList();
+		return transitions.getTransitionUpdateStringFull(transitions.getTotalIndexOfTransition(i, offset));
+	}
+	
 	@Override
 	public State computeTransitionTarget(int index, int offset) throws PrismException
 	{
 		return getTransitionList().getChoice(index).computeTarget(offset, exploreState);
 	}
 
-	//@Override
-	public State computeTransitionTarget(int index) throws PrismException
-	{
-		return getTransitionList().computeTransitionTarget(index, exploreState);
-	}
-	
-	@Override
-    public int getPlayerNumberForChoice(int i) throws PrismException
+    protected int getPlayerNumberForChoice(int i) throws PrismException
 	{
     	throw new PrismException("Not implemented");
 	}
@@ -383,7 +514,27 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 	public boolean isLabelTrue(int i) throws PrismException
 	{
 		Expression expr = labelList.getLabel(i);
-		return expr.evaluateBoolean(exploreState);
+		return expr.evaluateExact(exploreState).toBoolean();
+	}
+	
+	// Methods for RewardGenerator interface
+
+	@Override
+	public List<String> getRewardStructNames()
+	{
+		return modulesFile.getRewardStructNames();
+	}
+	
+	@Override
+	public boolean rewardStructHasStateRewards(int i)
+	{
+		return modulesFile.rewardStructHasStateRewards(i);
+	}
+	
+	@Override
+	public boolean rewardStructHasTransitionRewards(int i)
+	{
+		return modulesFile.rewardStructHasTransitionRewards(i);
 	}
 	
 	@Override
@@ -395,8 +546,8 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 		for (int i = 0; i < n; i++) {
 			if (!rewStr.getRewardStructItem(i).isTransitionReward()) {
 				Expression guard = rewStr.getStates(i);
-				if (guard.evaluateBoolean(modulesFile.getConstantValues(), state)) {
-					double rew = rewStr.getReward(i).evaluateDouble(modulesFile.getConstantValues(), state);
+				if (guard.evaluateExact(modulesFile.getConstantValues(), state).toBoolean()) {
+					double rew = rewStr.getReward(i).evaluateExact(modulesFile.getConstantValues(), state).doubleValue();
 					if (Double.isNaN(rew))
 						throw new PrismLangException("Reward structure evaluates to NaN at state " + state, rewStr.getReward(i));
 					d += rew;
@@ -417,8 +568,8 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 				Expression guard = rewStr.getStates(i);
 				String cmdAction = rewStr.getSynch(i);
 				if (action == null ? (cmdAction.isEmpty()) : action.equals(cmdAction)) {
-					if (guard.evaluateBoolean(modulesFile.getConstantValues(), state)) {
-						double rew = rewStr.getReward(i).evaluateDouble(modulesFile.getConstantValues(), state);
+					if (guard.evaluateExact(modulesFile.getConstantValues(), state).toBoolean()) {
+						double rew = rewStr.getReward(i).evaluateExact(modulesFile.getConstantValues(), state).doubleValue();
 						if (Double.isNaN(rew))
 							throw new PrismLangException("Reward structure evaluates to NaN at state " + state, rewStr.getReward(i));
 						d += rew;
@@ -429,28 +580,17 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 		return d;
 	}
 	
-	//@Override
-	public void calculateStateRewards(State state, double[] store) throws PrismLangException
-	{
-		// TODO updater.calculateStateRewards(state, store);
-	}
+	// ModelGeneratorSymbolic
 	
 	@Override
-	public VarList createVarList()
+	public Expression getUnknownConstantDefinition(String name) throws PrismException
 	{
-		return varList;
-	}
-	
-	// Miscellaneous (unused?) methods
-	
-	//@Override
-	public void getRandomInitialState(RandomNumberGenerator rng, State initialState) throws PrismException
-	{
-		if (modulesFile.getInitialStates() == null) {
-			initialState.copy(modulesFile.getDefaultInitialState());
-		} else {
-			throw new PrismException("Random choice of multiple initial states not yet supported");
+		ConstantList constantList = modulesFile.getConstantList();
+		int i = constantList.getConstantIndex(name);
+		if (i == -1) {
+			throw new PrismException("Unknown constant " + name);
 		}
+		return constantList.getConstant(i);
 	}
 
 	// Local utility methods
@@ -467,24 +607,5 @@ public class ModulesFileModelGeneratorSymbolic extends DefaultModelGenerator imp
 			transitionListBuilt = true;
 		}
 		return transitionList;
-	}
-
-	// ModelGeneratorSymbolic
-	
-	@Override
-	public Expression getUnknownConstantDefinition(String name) throws PrismException
-	{
-		ConstantList constantList = modulesFile.getConstantList();
-		int i = constantList.getConstantIndex(name);
-		if (i == -1) {
-			throw new PrismException("Unknown constant " + name);
-		}
-		return constantList.getConstant(i);
-	}
-
-	@Override
-	public boolean rewardStructHasTransitionRewards(int i)
-	{
-		return modulesFile.rewardStructHasTransitionRewards(i);
 	}
 }

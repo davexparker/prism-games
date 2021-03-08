@@ -1,0 +1,20 @@
+// Max probability all tasks complete
+<<sched>>Pmax=?[ F "tasks_complete" ];
+
+// Min expected time to complete all tasks
+<<sched>>R{"time"}min=?[ F "tasks_complete" ];
+
+// Min expected energy to complete all tasks
+<<sched>>R{"energy"}min=?[ F "tasks_complete" ]; 
+
+// Min expected time to complete all tasks
+<<env>>R{"time"}max=?[ F "tasks_complete" ];
+
+// Min expected energy to complete all tasks
+<<env>>R{"energy"}max=?[ F "tasks_complete" ];
+
+// Min expected time to complete all tasks
+<<sched,env>>R{"time"}min=?[ F "tasks_complete" ];
+
+// Min expected energy to complete all tasks
+<<sched,env>>R{"energy"}min=?[ F "tasks_complete" ]; 

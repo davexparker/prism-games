@@ -55,15 +55,32 @@ public class SamplerBoundedUntilCont extends SamplerBoolean
 			throw new PrismException("Error creating Sampler");
 		left = expr.getOperand1();
 		right = expr.getOperand2();
+
 		lb = expr.getLowerBound() == null ? 0.0 : expr.getLowerBound().evaluateDouble();
-		ub = expr.getUpperBound() == null ? Double.POSITIVE_INFINITY : expr.getUpperBound().evaluateDouble();
+		if (lb < 0) {
+			throw new PrismException("Invalid lower bound " + lb + " in time-bounded until formula");
+		}
+
+		if (expr.getUpperBound() == null) {
+			ub = Double.POSITIVE_INFINITY;
+		} else {
+			ub = expr.getUpperBound().evaluateDouble();
+			if (ub < 0 || (ub == 0 && expr.upperBoundIsStrict())) {
+				String bound = (expr.upperBoundIsStrict() ? "<" : "<=") + ub;
+				throw new PrismException("Invalid upper bound " + bound + " in time-bounded until formula");
+			}
+			if (ub < lb) {
+				throw new PrismException("Upper bound must exceed lower bound in time-bounded until formula");
+			}
+		}
+
 		// Initialise sampler info
 		reset();
 		resetStats();
 	}
 
 	@Override
-	public boolean update(Path path, TransitionList transList) throws PrismLangException
+	public boolean update(Path path, ModelGenerator modelGen) throws PrismException
 	{
 		// If the answer is already known we should do nothing
 		if (valueKnown)
@@ -136,7 +153,7 @@ public class SamplerBoundedUntilCont extends SamplerBoolean
 					}
 				}
 				// Or, if we are now at a deadlock
-				else if (transList != null && transList.isDeadlock()) {
+				else if (modelGen != null && modelGen.isDeadlock()) {
 					valueKnown = true;
 					value = false;
 				}
@@ -150,7 +167,7 @@ public class SamplerBoundedUntilCont extends SamplerBoolean
 	@Override
 	public boolean needsBoundedNumSteps()
 	{
-		// Always bounded (although we don't know the exact num steps, just the time bound)
-		return true;
+		// Bounded if there is a non-finite upper-bound (although we don't know the exact num steps, just the time bound)
+		return ub < Double.POSITIVE_INFINITY;
 	}
 }

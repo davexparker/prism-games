@@ -2,7 +2,7 @@
 //	
 //	Copyright (c) 2002-
 //	Authors:
-//	* Dave Parker <david.parker@comlab.ox.ac.uk> (University of Oxford, formerly University of Birmingham)
+//	* Dave Parker <d.a.parker@cs.bham.ac.uk> (University of Birmingham/Oxford)
 //	
 //------------------------------------------------------------------------------
 //	
@@ -27,27 +27,25 @@
 package parser.ast;
 
 import java.util.ArrayList;
-import java.util.BitSet;
+import java.util.Iterator;
+import java.util.stream.Collectors;
 
-import parser.*;
-import parser.type.*;
-import parser.visitor.*;
+import parser.EvaluateContextSubstate;
+import parser.State;
+import parser.Values;
+import parser.VarList;
+import parser.type.Type;
+import parser.visitor.ASTVisitor;
 import prism.PrismLangException;
 
 /**
  * Class to store a single update, i.e. a list of assignments of variables to expressions, e.g. (s'=1)&amp;(x'=x+1)
  */
-public class Update extends ASTElement
+public class Update extends ASTElement implements Iterable<UpdateElement>
 {
-	// Lists of variable/expression pairs (and types)
-	private ArrayList<String> vars;
-	private ArrayList<Expression> exprs;
-	private ArrayList<Type> types;
-	// We also store an ExpressionIdent to match each variable.
-	// This is to just to provide positional info.
-	private ArrayList<ExpressionIdent> varIdents;
-	// The indices of each variable in the model to which it belongs
-	private ArrayList<Integer> indices;
+	// Individual elements of update
+	private ArrayList<UpdateElement> elements;
+
 	// Parent Updates object
 	private Updates parent;
 
@@ -56,11 +54,7 @@ public class Update extends ASTElement
 	 */
 	public Update()
 	{
-		vars = new ArrayList<String>();
-		exprs = new ArrayList<Expression>();
-		types = new ArrayList<Type>();
-		varIdents = new ArrayList<ExpressionIdent>();
-		indices = new ArrayList<Integer>();
+		elements = new ArrayList<>();
 	}
 
 	// Set methods
@@ -72,11 +66,23 @@ public class Update extends ASTElement
 	 */
 	public void addElement(ExpressionIdent v, Expression e)
 	{
-		vars.add(v.getName());
-		exprs.add(e);
-		types.add(null); // Type currently unknown
-		varIdents.add(v);
-		indices.add(-1); // Index currently unknown
+		elements.add(new UpdateElement(v, e));
+	}
+
+	/**
+	 * Add a variable assignment (encoded as an UpdateElement) to this update.
+	 */
+	public void addElement(UpdateElement e)
+	{
+		elements.add(e);
+	}
+
+	/**
+	 * Set the ith variable assignment (encoded as an UpdateElement) to this update.
+	 */
+	public void setElement(int i, UpdateElement e)
+	{
+		elements.set(i, e);
 	}
 
 	/**
@@ -86,8 +92,7 @@ public class Update extends ASTElement
 	 */
 	public void setVar(int i, ExpressionIdent v)
 	{
-		vars.set(i, v.getName());
-		varIdents.set(i, v);
+		elements.get(i).setVarIdent(v);
 	}
 
 	/**
@@ -97,7 +102,7 @@ public class Update extends ASTElement
 	 */
 	public void setExpression(int i, Expression e)
 	{
-		exprs.set(i, e);
+		elements.get(i).setExpression(e);
 	}
 
 	/**
@@ -107,7 +112,7 @@ public class Update extends ASTElement
 	 */
 	public void setType(int i, Type t)
 	{
-		types.set(i, t);
+		elements.get(i).setType(t);
 	}
 
 	/**
@@ -117,7 +122,7 @@ public class Update extends ASTElement
 	 */
 	public void setVarIndex(int i, int index)
 	{
-		indices.set(i, index);
+		elements.get(i).setVarIndex(index);
 	}
 
 	/**
@@ -135,15 +140,21 @@ public class Update extends ASTElement
 	 */
 	public int getNumElements()
 	{
-		return vars.size();
+		return elements.size();
 	}
 
+	/** Get the update element (individual assignment) with the given index. */
+	public UpdateElement getElement(int index)
+	{
+		return elements.get(index);
+	}
+	
 	/**
 	 * Get the name of the {@code i}th variable in this update.
 	 */
 	public String getVar(int i)
 	{
-		return vars.get(i);
+		return elements.get(i).getVar();
 	}
 
 	/**
@@ -151,7 +162,7 @@ public class Update extends ASTElement
 	 */
 	public Expression getExpression(int i)
 	{
-		return exprs.get(i);
+		return elements.get(i).getExpression();
 	}
 
 	/**
@@ -159,7 +170,7 @@ public class Update extends ASTElement
 	 */
 	public Type getType(int i)
 	{
-		return types.get(i);
+		return elements.get(i).getType();
 	}
 
 	/**
@@ -167,7 +178,7 @@ public class Update extends ASTElement
 	 */
 	public ExpressionIdent getVarIdent(int i)
 	{
-		return varIdents.get(i);
+		return elements.get(i).getVarIdent();
 	}
 
 	/**
@@ -175,7 +186,7 @@ public class Update extends ASTElement
 	 */
 	public int getVarIndex(int i)
 	{
-		return indices.get(i);
+		return elements.get(i).getVarIndex();
 	}
 
 	/**
@@ -195,13 +206,8 @@ public class Update extends ASTElement
 	 */
 	public Values update(Values constantValues, Values oldValues) throws PrismLangException
 	{
-		int i, n;
-		Values res;
-		res = new Values(oldValues);
-		n = exprs.size();
-		for (i = 0; i < n; i++) {
-			res.setValue(getVar(i), getExpression(i).evaluate(constantValues, oldValues));
-		}
+		Values res = new Values(oldValues);
+		update(constantValues, oldValues, res);
 		return res;
 	}
 
@@ -215,10 +221,8 @@ public class Update extends ASTElement
 	 */
 	public void update(Values constantValues, Values oldValues, Values newValues) throws PrismLangException
 	{
-		int i, n;
-		n = exprs.size();
-		for (i = 0; i < n; i++) {
-			newValues.setValue(getVar(i), getExpression(i).evaluate(constantValues, oldValues));
+		for (UpdateElement e : this) {
+			e.update(constantValues, oldValues, newValues);
 		}
 	}
 
@@ -230,13 +234,8 @@ public class Update extends ASTElement
 	 */
 	public State update(State oldState) throws PrismLangException
 	{
-		int i, n;
-		State res;
-		res = new State(oldState);
-		n = exprs.size();
-		for (i = 0; i < n; i++) {
-			res.setValue(getVarIndex(i), getExpression(i).evaluate(oldState));
-		}
+		State res = new State(oldState);
+		update(oldState, res);
 		return res;
 	}
 
@@ -245,15 +244,29 @@ public class Update extends ASTElement
 	 * Apply changes in variables to a provided copy of the State object.
 	 * (i.e. oldState and newState should be equal when passed in) 
 	 * It is assumed that any constants have already been defined.
+	 * <br>
+	 * Arithmetic expressions are evaluated using the default evaluate (i.e., not using exact arithmetic)
 	 * @param oldState Variable values in current state
 	 * @param newState State object to apply changes to
 	 */
 	public void update(State oldState, State newState) throws PrismLangException
 	{
-		int i, n;
-		n = exprs.size();
-		for (i = 0; i < n; i++) {
-			newState.setValue(getVarIndex(i), getExpression(i).evaluate(oldState));
+		update(oldState, newState, false);
+	}
+
+	/**
+	 * Execute this update, based on variable values specified as a State object.
+	 * Apply changes in variables to a provided copy of the State object.
+	 * (i.e. oldState and newState should be equal when passed in)
+	 * It is assumed that any constants have already been defined.
+	 * @param oldState Variable values in current state
+	 * @param newState State object to apply changes to
+	 * @param exact evaluate arithmetic expressions exactly?
+	 */
+	public void update(State oldState, State newState, boolean exact) throws PrismLangException
+	{
+		for (UpdateElement e : this) {
+			e.update(oldState, newState, exact);
 		}
 	}
 
@@ -273,7 +286,7 @@ public class Update extends ASTElement
 	public void updatePartially(State oldState, State newState, int[] varMap) throws PrismLangException
 	{
 		int i, j, n;
-		n = exprs.size();
+		n = elements.size();
 		for (i = 0; i < n; i++) {
 			j = varMap[getVarIndex(i)];
 			if (j != -1) {
@@ -289,67 +302,52 @@ public class Update extends ASTElement
 	 */
 	public State checkUpdate(State oldState, VarList varList) throws PrismLangException
 	{
-		int i, n, valNew;
 		State res;
 		res = new State(oldState);
-		n = exprs.size();
-		for (i = 0; i < n; i++) {
-			valNew = varList.encodeToInt(i, getExpression(i).evaluate(oldState));
-			if (valNew < varList.getLow(i) || valNew > varList.getHigh(i))
-				throw new PrismLangException("Value of variable " + getVar(i) + " overflows", getExpression(i));
+		for (UpdateElement e : this) {
+			e.checkUpdate(oldState, varList);
 		}
 		return res;
 	}
 
 	// Methods required for ASTElement:
 
-	/**
-	 * Visitor method.
-	 */
+	@Override
 	public Object accept(ASTVisitor v) throws PrismLangException
 	{
 		return v.visit(this);
 	}
 
-	/**
-	 * Convert to string.
-	 */
-	public String toString()
-	{
-		int i, n;
-		String s = "";
-
-		n = exprs.size();
-		// normal case
-		if (n > 0) {
-			for (i = 0; i < n - 1; i++) {
-				s = s + "(" + vars.get(i) + "'=" + exprs.get(i) + ") & ";
-			}
-			s = s + "(" + vars.get(n - 1) + "'=" + exprs.get(n - 1) + ")";
-		}
-		// special (empty) case
-		else {
-			s = "true";
-		}
-
-		return s;
-	}
-
-	/**
-	 * Perform a deep copy.
-	 */
+	@Override
 	public ASTElement deepCopy()
 	{
-		int i, n;
 		Update ret = new Update();
-		n = getNumElements();
-		for (i = 0; i < n; i++) {
-			ret.addElement((ExpressionIdent) getVarIdent(i).deepCopy(), getExpression(i).deepCopy());
-			ret.setType(i, getType(i));
-			ret.setVarIndex(i, getVarIndex(i));
+		for (UpdateElement e : this) {
+			ret.addElement(e.deepCopy());
 		}
 		ret.setPosition(this);
 		return ret;
+	}
+	
+	// Other methods:
+	
+	@Override
+	public Iterator<UpdateElement> iterator()
+	{
+		return elements.iterator();
+	}
+	
+	@Override
+	public String toString()
+	{
+		// Normal case
+		if (elements.size() > 0) {
+			return elements.stream().map(UpdateElement::toString).collect(Collectors.joining(" & "));
+		}
+		// Special (empty) case
+		else {
+			return "true";
+		}
 	}
 }
 

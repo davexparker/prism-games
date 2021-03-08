@@ -223,6 +223,7 @@ jint flags
 		title += "), interval";
 
 		iterationExport.reset(new ExportIterations(title.c_str()));
+		PS_PrintToMainLog(env, "Exporting iterations to %s\n", iterationExport->getFileName().c_str());
 		iterationExport->exportVector(soln_below, n, 0);
 		iterationExport->exportVector(soln_above, n, 1);
 	}
@@ -347,6 +348,7 @@ jint flags
 	}
 
 	if (helper.flag_select_midpoint() && soln_below) { // we did converge, select midpoint
+		last_error_bound = measure.value();
 		helper.selectMidpoint(soln_below, soln_above, n);
 
 		if (iterationExport) {

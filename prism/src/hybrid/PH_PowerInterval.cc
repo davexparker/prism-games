@@ -182,7 +182,8 @@ jint flags
 
 	std::unique_ptr<ExportIterations> iterationExport;
 	if (PH_GetFlagExportIterations()) {
-		iterationExport.reset(new ExportIterations("PH_Power"));
+		iterationExport.reset(new ExportIterations("PH_Power_Interval"));
+		PH_PrintToMainLog(env, "Exporting iterations to %s\n", iterationExport->getFileName().c_str());
 		iterationExport->exportVector(soln_below, n, 0);
 		iterationExport->exportVector(soln_above, n, 1);
 	}
@@ -281,6 +282,7 @@ jint flags
 	}
 
 	if (helper.flag_select_midpoint() && soln_below) { // we did converge, select midpoint
+		last_error_bound = measure.value();
 		helper.selectMidpoint(soln_below, soln_above, n);
 
 		if (iterationExport) {

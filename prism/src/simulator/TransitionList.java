@@ -27,9 +27,7 @@
 package simulator;
 
 import java.util.*;
-import java.util.Map.Entry;
 
-import explicit.Distribution;
 import parser.*;
 import prism.*;
 
@@ -43,16 +41,14 @@ public class TransitionList
 	private int numChoices = 0;
 	private int numTransitions = 0;
 	private double probSum = 0.0;
-	/** The probability with which a strategy picks each choice (optional) **/
-	private double strategyProbabilities[] = null;
+	/** The indexes of the actions for each transition in CSGs **/
+	private ArrayList<int[]> transitionIndexes = new ArrayList<int[]>(); // added for CSGs.
 
 	// TODO: document this
 	public class Ref
 	{
 		public int i;
 		public int offset;
-		//int index;
-		//Choice ch;
 	}
 
 	public void clear()
@@ -63,7 +59,7 @@ public class TransitionList
 		numChoices = 0;
 		numTransitions = 0;
 		probSum = 0.0;
-		strategyProbabilities = null;
+		transitionIndexes.clear();
 	}
 
 	public void add(Choice tr)
@@ -80,6 +76,21 @@ public class TransitionList
 		probSum += tr.getProbabilitySum();
 	}
 	
+	public void add(Choice tr, int[] indexes)
+	{
+		int i, n;
+		choices.add(tr);
+		n = tr.size();
+		for (i = 0; i < n; i++) {
+			transitionIndices.add(choices.size() - 1);
+			transitionOffsets.add(i);
+			transitionIndexes.add(choices.size() - 1, indexes);
+		}
+		numChoices++;
+		numTransitions += tr.size();
+		probSum += tr.getProbabilitySum();
+	}
+	
 	/**
 	 * Scale probability/rate of all transitions in all choices, multiplying by d.
 	 */
@@ -87,21 +98,6 @@ public class TransitionList
 	{
 		for (int i = 0; i < numChoices; i++) {
 			getChoice(i).scaleProbabilitiesBy(d);
-		}
-	}
-	
-	/**
-	 * Add probabilities assigned to choices by a strategy. 
-	 */
-	public void addStrategyProbabilities(Distribution strategyDistribution)
-	{
-		// Extract choice probabilities from distribution into an array
-		strategyProbabilities = new double[numChoices];
-		Arrays.fill(strategyProbabilities, 0.0);
-		Iterator<Entry<Integer, Double>> it = strategyDistribution.iterator();
-		while (it.hasNext()) {
-			Entry<Integer, Double> entry = it.next();
-			strategyProbabilities[entry.getKey()] += entry.getValue();
 		}
 	}
 	
@@ -180,6 +176,15 @@ public class TransitionList
 	{
 		return transitionIndices.indexOf(i) + offset;
 	}
+	
+	/**
+	 * Get action indexes for CSG transitions
+	 */
+	
+	public int[] getTransitionActionIndexes(int i) 
+	{
+	    return transitionIndexes.get(i);
+	}
 
 	// Random selection of a choice 
 
@@ -222,6 +227,20 @@ public class TransitionList
 	}
 
 	/**
+	 * Get a string describing the action/module of a transition, specified by its index.
+	 * (form is "module M" or "action a")
+	 */
+	public String getTransitionModuleOrActionDescription(int index) throws PrismException
+	{
+		String modAct = getChoiceOfTransition(index).getModuleOrAction();
+		if (modAct.charAt(0) == '[') {
+			return "action " + modAct.substring(1, modAct.length() - 1);
+		} else {
+			return "module " + modAct;
+		}
+	}
+
+	/**
 	 * Get the index of the action/module of a transition, specified by its index.
 	 * (-i for independent in ith module, i for synchronous on ith action)
 	 * (in both cases, modules/actions are 1-indexed)
@@ -229,6 +248,15 @@ public class TransitionList
 	public int getTransitionModuleOrActionIndex(int index) throws PrismLangException
 	{
 		return getChoiceOfTransition(index).getModuleOrActionIndex();
+	}
+
+	/**
+	 * Get a string describing the action/module of a choice, specified by its index.
+	 * (form is "module" or "[action]")
+	 */
+	public String getChoiceModuleOrAction(int index)
+	{
+		return getChoice(index).getModuleOrAction();
 	}
 
 	/**
@@ -278,23 +306,6 @@ public class TransitionList
 	public State computeTransitionTarget(int index, State currentState) throws PrismLangException
 	{
 		return getChoiceOfTransition(index).computeTarget(transitionOffsets.get(index), currentState);
-	}
-	
-	/**
-	 * Check whether or not there is strategy choice info stored for these transitions.
-	 */
-	public boolean hasStrategyChoiceInfo()
-	{
-		return strategyProbabilities != null;
-	}
-	
-	/**
-	 * Get the probability assigned by a strategy to a choice, specified by its index.
-	 * This will return 1.0 if no strategy info has been attached (see {@link #hasStrategyChoiceInfo()}) 
-	 */
-	public double getStrategyProbabilityForChoice(int i)
-	{
-		return strategyProbabilities == null ? 1.0 : strategyProbabilities[i];
 	}
 	
 	// Other checks and queries

@@ -33,12 +33,16 @@ import prism.PrismLangException;
 
 public class ExpressionIdent extends Expression
 {
+	// Identifier name
 	protected String name;
+	// Whether this reference is to name' rather than name
+	protected boolean prime;
 	
 	// Constructors
 	
 	public ExpressionIdent()
 	{
+		prime = false;
 	}
 	
 	public ExpressionIdent(String n)
@@ -60,6 +64,16 @@ public class ExpressionIdent extends Expression
 		return name;
 	}
 
+	public void setPrime(boolean p) 
+	{
+		prime = p;
+	}
+	
+	public boolean getPrime() 
+	{
+		return prime;
+	}	
+	
 	// Methods required for Expression:
 	
 	@Override
@@ -113,6 +127,7 @@ public class ExpressionIdent extends Expression
 		ExpressionIdent expr = new ExpressionIdent(name);
 		expr.setType(type);
 		expr.setPosition(this);
+		expr.setPrime(prime);
 		return expr;
 	}
 
@@ -121,7 +136,7 @@ public class ExpressionIdent extends Expression
 	@Override
 	public String toString()
 	{
-		return name;
+		return name + (prime ? "'" : "");
 	}
 
 	@Override
@@ -130,6 +145,7 @@ public class ExpressionIdent extends Expression
 		final int prime = 31;
 		int result = 1;
 		result = prime * result + ((name == null) ? 0 : name.hashCode());
+		result = prime * result + (this.prime ? 1231 : 1237);
 		return result;
 	}
 
@@ -148,7 +164,16 @@ public class ExpressionIdent extends Expression
 				return false;
 		} else if (!name.equals(other.name))
 			return false;
+		if (prime != other.prime)
+			return false;
 		return true;
+	}
+
+	// Static utility methods
+	
+	public static boolean isLegalIdentifierName(String name)
+	{
+		return name.matches("[_a-zA-z][_a-zA-z0-9]*");
 	}
 }
 

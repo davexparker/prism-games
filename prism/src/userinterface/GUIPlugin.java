@@ -150,25 +150,21 @@ public abstract class GUIPlugin extends JPanel implements GUIEventListener, Pris
 	 */	
 	public abstract JToolBar getToolBar();
 	
-	/** Abstract access method to be implemented to provide an OptionsPanel to be
-	 * displayed as part of the OptionsDialog stored in the parent GUI.
-	 * @return An OptionsPanel for this plugin.  Returns null if no options panel is required.
-	 */	
-	public abstract OptionsPanel getOptions();
-	
 	/** Returns an XML representation of this plugin, for use in saving the state of the
 	 * system to a file
 	 * @return The XML description
 	 * @deprecated This method was intended for use in projects.  Projects are no longer going to
 	 * be included in the project.
-	 */	
+	 */
+	@Deprecated
 	public abstract Object getXMLSaveTree();
 	
 	/** Returns an XML tag for this plugin
 	 * @return An XML tag
 	 * @deprecated This method was intended for use in projects.  Projects are no longer going to
 	 * be included in the project.
-	 */	
+	 */
+	@Deprecated
 	public abstract String getXMLIDTag();
 	
 	/** Returns a boolean stating whether this plugin should be displayed as a tab
@@ -244,12 +240,21 @@ public abstract class GUIPlugin extends JPanel implements GUIEventListener, Pris
 	 * @param e A GUIEvent from elsewhere in the userinterface.
 	 */	
 	public abstract boolean processGUIEvent(GUIEvent e);
+
+	/**
+	 * Hook that is called for each GUIPlugin after the GUI startup has completed.
+	 */
+	public void onInitComponentsCompleted()
+	{
+		// default: do nothing
+	}
 	
 	/** Loads an XML tree stored in 'c'.
 	 * @param c The XML tree
 	 * @deprecated This method was intended for use in projects.  Projects are no longer going to
 	 * be included in the project.
 	 */	
+	@Deprecated
 	public abstract void loadXML(Object c); //the object will be an xml parse tree
 	
 	/** A utility method which is simply a wrapper of the corresponding method in the

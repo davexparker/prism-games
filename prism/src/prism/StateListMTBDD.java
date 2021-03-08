@@ -33,7 +33,6 @@ import odd.*;
 import parser.State;
 import parser.Values;
 import parser.VarList;
-import parser.type.*;
 
 /**
  * Stores a list of states as a BDD (or as a 0-1 MTBDD).
@@ -188,11 +187,15 @@ public class StateListMTBDD implements StateList
 	}
 	
 	@Override
-	public void printDot(PrismLog log)
+	public void printDot(PrismLog log) throws PrismException
 	{
 		outputFormat = OutputFormat.DOT;
 		limit = false;
 		outputLog = log;
+
+		if (odd == null) {
+			throw new PrismNotSupportedException("Cannot export state list as DOT, too many states");
+		}
 		doPrint();
 	}
 	
@@ -245,23 +248,28 @@ public class StateListMTBDD implements StateList
 		if (level == numVars) {
 			
 			switch (outputFormat) {
-			case NORMAL: outputLog.print(n + ":("); break;
+			case NORMAL:
+				if (o != null) {
+					outputLog.print(n + ":(");
+				} else {
+					// we have no index
+					outputLog.print("(");
+				}
+				break;
 			case MATLAB: break;
-			case DOT: outputLog.print(n + " [label=\"" + n + "\\n("); break;
+			case DOT:
+				assert(o != null);  // should not happen, missing ODD is caught before
+				outputLog.print(n + " [label=\"" + n + "\\n(");
+				break;
 			case STRINGS: break;
 			}
 			j = varList.getNumVars();
 			varsString = "";
 			for (i = 0; i < j; i++) {
-				// integer variable
-				if (varList.getType(i) instanceof TypeInt) {
-					varsString += varValues[i]+varList.getLow(i);
+				varsString += varList.decodeFromInt(i, varValues[i]).toString();
+				if (i < j-1) {
+					varsString += ",";
 				}
-				// boolean variable
-				else {
-					varsString += (varValues[i] == 1);
-				}
-				if (i < j-1) varsString += ",";
 			}
 			switch (outputFormat) {
 			case NORMAL: outputLog.println(varsString + ")"); break;
@@ -282,14 +290,18 @@ public class StateListMTBDD implements StateList
 			e = dd.getElse();
 			t = dd.getThen();
 		}
-		
+
+		ODDNode oe = (o != null ? o.getElse() : null);
+		ODDNode ot = (o != null ? o.getThen() : null);
+		long eoff = (o != null ? o.getEOff() : 0);
+
 		// then recurse...
 		currentVarLevel++; if (currentVarLevel == varSizes[currentVar]) { currentVar++; currentVarLevel=0; }
-		printRec(e, level+1, o.getElse(), n);
+		printRec(e, level+1, oe, n);
 		currentVarLevel--; if (currentVarLevel == -1) { currentVar--; currentVarLevel=varSizes[currentVar]-1; }
 		varValues[currentVar] += (1 << (varSizes[currentVar]-1-currentVarLevel));
 		currentVarLevel++; if (currentVarLevel == varSizes[currentVar]) { currentVar++; currentVarLevel=0; }
-		printRec(t, level+1, o.getThen(), n+o.getEOff());
+		printRec(t, level+1, ot, n + eoff);
 		currentVarLevel--; if (currentVarLevel == -1) { currentVar--; currentVarLevel=varSizes[currentVar]-1; }
 		varValues[currentVar] -= (1 << (varSizes[currentVar]-1-currentVarLevel));
 	}
@@ -358,12 +370,7 @@ public class StateListMTBDD implements StateList
 				}
 				level++;
 			}
-			v += varList.getLow(i);
-			if (varList.getType(i) instanceof TypeInt) {
-				o = new Integer(v);
-			} else {
-				o = new Boolean(v == 1);
-			}
+			o = varList.decodeFromInt(i, v);
 			values.addValue(varList.getName(i), o);
 		}
 		
@@ -374,11 +381,14 @@ public class StateListMTBDD implements StateList
 	}
 
 	@Override
-	public int getIndexOfState(State state)
+	public int getIndexOfState(State state) throws PrismNotSupportedException
 	{
 		// Traverse BDD/ODD, top to bottom, computing index
 		JDDNode ptr = states;
 		ODDNode o = odd;
+
+		ODDUtils.checkInt(odd, "Cannot get index of state in model");
+
 		int level = 0;
 		int index = 0;
 		// Iterate through variables

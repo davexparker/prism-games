@@ -113,6 +113,9 @@ public class GUIMultiModelHandler extends JPanel implements PrismModelListener
 
 	private Style pepaEditorCommentFast = Style.defaultStyle();
 
+	// flag to indicate whether onInitComponentsCompleted() has already been called
+	private boolean startupCompleted = false;
+
 	// Modification Parse updater
 	private WaitParseThread waiter;
 	private boolean parsing = false;
@@ -142,8 +145,6 @@ public class GUIMultiModelHandler extends JPanel implements PrismModelListener
 		prism = theModel.getPrism();
 		prism.addModelListener(this);
 
-		int parseDelay = theModel.getPrism().getSettings().getInteger(PrismSettings.MODEL_PARSE_DELAY);
-		waiter = new WaitParseThread(parseDelay, this);
 		editor = new GUITextModelEditor("", this);
 		tree = new GUIMultiModelTree(this);
 		splitter = new JSplitPane();
@@ -223,6 +224,37 @@ public class GUIMultiModelHandler extends JPanel implements PrismModelListener
 		splitter.setOneTouchExpandable(true);
 		setLayout(new BorderLayout());
 		add(splitter, BorderLayout.CENTER);
+	}
+
+	private synchronized void restartWaitParseThread()
+	{
+		// If the GUIPrism startup has not been completed, as
+		// indicated by the call to onInitComponentsCompleted(),
+		// ignore requests to start the WaitParseThread. This prevents
+		// it from triggering events that are handled by parts of the
+		// GUI that have not been completely initialised.
+		if (!startupCompleted)
+			return;
+
+		// Don't trigger parsing if the text field is empty
+		if (editor.getParseText().trim().isEmpty())
+			return;
+		
+		if (waiter != null) {
+			waiter.interrupt();
+		}
+		int parseDelay = theModel.getPrism().getSettings().getInteger(PrismSettings.MODEL_PARSE_DELAY);
+		waiter = new WaitParseThread(parseDelay, this);
+		waiter.start();
+		//Funky thread waiting stuff
+	}
+
+	public void onInitComponentsCompleted()
+	{
+		startupCompleted = true;
+
+		// initially, start WaitParseThread
+		restartWaitParseThread();
 	}
 
 	// New model...
@@ -545,14 +577,7 @@ public class GUIMultiModelHandler extends JPanel implements PrismModelListener
 			tree.makeNotUpToDate();
 			//start a new parse thread
 			if (isAutoParse()) {
-				if (waiter != null) {
-					waiter.interrupt();
-				}
-				int parseDelay = theModel.getPrism().getSettings().getInteger(PrismSettings.MODEL_PARSE_DELAY);
-				waiter = new WaitParseThread(parseDelay, this);
-
-				waiter.start();
-				//Funky thread waiting stuff
+				restartWaitParseThread();
 			}
 		} else if (buildAfterReceiveParseNotification) {
 			buildAfterParse();
@@ -585,13 +610,7 @@ public class GUIMultiModelHandler extends JPanel implements PrismModelListener
 			tree.makeNotUpToDate();
 			//start a new parse thread
 			if (isAutoParse()) {
-				if (waiter != null) {
-					waiter.interrupt();
-				}
-				int parseDelay = theModel.getPrism().getSettings().getInteger(PrismSettings.MODEL_PARSE_DELAY);
-				waiter = new WaitParseThread(parseDelay, this);
-				waiter.start();
-				//Funky thread waiting stuff
+				restartWaitParseThread();
 			}
 		} else {
 			buildAfterReceiveParseNotification = false;
@@ -629,7 +648,8 @@ public class GUIMultiModelHandler extends JPanel implements PrismModelListener
 			lastMFConstants = unC.getMFConstantValues();
 		}
 		try {
-			prism.setPRISMModelConstants(unC.getMFConstantValues());
+			// currently, don't evaluate constants exactly
+			prism.setPRISMModelConstants(unC.getMFConstantValues(), false);
 		} catch (PrismException e) {
 			theModel.error(e.getMessage());
 			return;
@@ -726,7 +746,8 @@ public class GUIMultiModelHandler extends JPanel implements PrismModelListener
 			lastMFConstants = unC.getMFConstantValues();
 		}
 		try {
-			prism.setPRISMModelConstants(unC.getMFConstantValues());
+			// currently, don't evaluate constants exactly
+			prism.setPRISMModelConstants(unC.getMFConstantValues(), false);
 		} catch (PrismException e) {
 			theModel.error(e.getMessage());
 			return;
@@ -764,7 +785,8 @@ public class GUIMultiModelHandler extends JPanel implements PrismModelListener
 			lastMFConstants = unC.getMFConstantValues();
 		}
 		try {
-			prism.setPRISMModelConstants(unC.getMFConstantValues());
+			// for steady-state, currently don't evaluate constants exactly
+			prism.setPRISMModelConstants(unC.getMFConstantValues(), false);
 		} catch (PrismException e) {
 			theModel.error(e.getMessage());
 			return;
@@ -802,7 +824,8 @@ public class GUIMultiModelHandler extends JPanel implements PrismModelListener
 			lastMFConstants = unC.getMFConstantValues();
 		}
 		try {
-			prism.setPRISMModelConstants(unC.getMFConstantValues());
+			// for transient computation, currently don't evaluate constants exactly
+			prism.setPRISMModelConstants(unC.getMFConstantValues(), false);
 		} catch (PrismException e) {
 			theModel.error(e.getMessage());
 			return;
@@ -835,13 +858,7 @@ public class GUIMultiModelHandler extends JPanel implements PrismModelListener
 
 		if (!parsing) {
 			if (isAutoParse() && attemptReparse) {
-				if (waiter != null) {
-					waiter.interrupt();
-				}
-				int parseDelay = theModel.getPrism().getSettings().getInteger(PrismSettings.MODEL_PARSE_DELAY);
-				waiter = new WaitParseThread(parseDelay, this);
-				waiter.start();
-				//Funky thread waiting stuff
+				restartWaitParseThread();
 			}
 		} else {
 			parseAfterParse = true;
@@ -953,12 +970,7 @@ public class GUIMultiModelHandler extends JPanel implements PrismModelListener
 			theModel.notifyEventListeners(new GUIModelEvent(GUIModelEvent.MODIFIED_SINCE_SAVE));
 			if (!parsing) {
 				if (isAutoParse()) {
-					if (waiter != null) {
-						waiter.interrupt();
-					}
-					int parseDelay = theModel.getPrism().getSettings().getInteger(PrismSettings.MODEL_PARSE_DELAY);
-					waiter = new WaitParseThread(parseDelay, this);
-					waiter.start();
+					restartWaitParseThread();
 				}
 			} else {
 				parseAfterParse = true;

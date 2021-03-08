@@ -5,6 +5,26 @@
 #      options configured here.              #
 ##############################################
 
+###############
+# Directories #
+###############
+
+# Note that these are all relative to the PRISM directory
+# to make the distribution more 'portable'.
+# If this is a problem, the best solution is to create symlinks.
+
+export PRISM_SRC_DIR     = src
+export PRISM_CLASSES_DIR = classes
+export PRISM_OBJ_DIR     = obj
+export PRISM_LIB_DIR     = lib
+export PRISM_INCLUDE_DIR = include
+export PRISM_IMAGES_DIR  = images
+export PRISM_DTDS_DIR    = dtds
+
+# Location of CUDD (used to be variable; now mainly fixed with the git repo layout)
+
+CUDD_DIR = ../cudd
+
 ####################
 # Operating system #
 ####################
@@ -66,6 +86,9 @@ ifeq ($(OSTYPE),linux)
 	ifneq (,$(findstring ia64, $(shell uname -m)))
 		ARCH = ia64
 	endif
+	ifneq (,$(findstring aarch64, $(shell uname -m)))
+		ARCH = aarch64
+	endif
 endif
 # For Mac/Windows, we decide whether to build in 64-bit mode based on
 # whether java is 32/64-bit (since these need to match)
@@ -99,7 +122,7 @@ endif
 # or pass a value to make directly, e.g.: make JAVA_DIR=/usr/java
 
 # Find javac
-DETECT_JAVAC = $(shell src/scripts/findjavac.sh 2> /dev/null)
+DETECT_JAVAC = $(shell $(PRISM_SRC_DIR)/scripts/findjavac.sh 2> /dev/null)
 
 # Find directory containing javac
 ifeq ("$(DETECT_JAVAC)","")
@@ -123,6 +146,17 @@ JAVA_DIR_BACKUP = $(shell \
 #JAVA_DIR =	/cygdrive/c/java/j2sdk1.4.2
 #JAVA_DIR =	/System/Library/Frameworks/JavaVM.framework
 
+# Now we locate the JNI header files jni.h and jni_md.h
+# (in fact this is the only reason we need JAVA_DIR)
+JAVA_JNI_H_DIR = $(shell \
+	if [ -f "$(JAVA_DIR)"/include/jni.h ]; then echo "$(JAVA_DIR)"/include; \
+	elif [ -f "$(JAVA_DIR)"/Headers/jni.h ]; then echo "$(JAVA_DIR)"/Headers; \
+	elif [ -f "$(JAVA_DIR_BACKUP)"/include/jni.h ]; then echo "$(JAVA_DIR_BACKUP)"/include; \
+	elif [ -f "$(JAVA_DIR_BACKUP)"/Headers/jni.h ]; then echo "$(JAVA_DIR_BACKUP)"/Headers; \
+	else echo ""; fi )
+JAVA_JNI_MD_H_DIR = $(shell (ls "$(JAVA_JNI_H_DIR)"/jni_md.h "$(JAVA_JNI_H_DIR)"/*/jni_md.h | head -n 1 | sed 's/\/jni_md.h//') 2>/dev/null)
+JAVA_INCLUDES = -I $(JAVA_JNI_H_DIR) -I $(JAVA_JNI_MD_H_DIR)
+
 ########
 # PPL  #
 ########
@@ -140,62 +174,91 @@ PPL_DIR = $(shell src/scripts/findppl.sh)
 #PPL_DIR = 		/usr/local/ppl/lib
 #PPL_DIR = 		/usr/local/lib
 
+# Expected names of (some) PPL files
+ifeq ($(OSTYPE),linux)
+	PPL_JAVA_LIB = libppl_java.so
+endif
+ifeq ($(OSTYPE),darwin)
+	PPL_JAVA_LIB = libppl_java.jnilib
+endif
+PPL_JAVA_JAR = ppl_java.jar
+
 ##################
 # Compilers etc. #
 ##################
 
-C = gcc
-CPP = g++
-LD = $(CPP)
+ifeq ($(OSTYPE),cygwin)
+	ifeq ($(ARCH),x86_64)
+		CC = /usr/bin/x86_64-w64-mingw32-gcc
+		CXX = /usr/bin/x86_64-w64-mingw32-g++
+	else
+		CC = /usr/bin/i686-w64-mingw32-gcc
+		CXX = /usr/bin/i686-w64-mingw32-g++
+	endif
+	JAVACC = javacc.bat
+else
+	CC = gcc
+	CXX = g++
+	JAVACC = javacc
+endif
+LD = $(CXX)
 JAVAC = javac
-JAVACC = javacc
-JAVAH = javah
+
+export CC CXX LD JAVAC JAVACC
 
 ##############
 # Flags etc. #
 ##############
 
+# Tell compiler to generate debug information?
+# (WARNING: must not contain a % symbol!)
 DEBUG = 
 #DEBUG = -g
 
+# Compiler optimisation level:
+# (WARNING: must not contain a % symbol!)
 OPTIMISE = -O3
 #OPTIMISE =
 
-# warnings we'd like to get
+# Compiler warnings to enable:
+# (WARNING: must not contain a % symbol!)
 WARNINGS = -Wformat
 
 # Flags for compilation/linking
 # Flags to generate shared libraries
 # Executable/library naming conventions
-# Option to pass to CUDD makefile
 # Suffix for binary distribution directory
-# Place to look for (JNI) headers
 # (requires GNU make for conditional evaluation)
 
 # Linux
 ifeq ($(OSTYPE),linux)
 	ifeq ($(ARCH),amd64)
 		# Position Independent Code required on AMD64/Itanium
-		CUDD_XCFLAGS = -m64 -fPIC -DPIC -DHAVE_IEEE_754 -DBSD -DSIZEOF_VOID_P=8 -DSIZEOF_LONG=8 $(DEBUG) $(WARNINGS)
-		CFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
-		CPPFLAGS = --std=c++11 $(CUDD_XCFLAGS) $(OPTIMISE)
-		LDFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
+		CFLAGS = -m64 -fPIC -DPIC -DHAVE_IEEE_754 -DBSD -DSIZEOF_VOID_P=8 -DSIZEOF_LONG=8 $(DEBUG) $(OPTIMISE) $(WARNINGS)
+		CXXFLAGS = --std=c++11 $(CFLAGS)
+		LDFLAGS = $(CFLAGS)
 		BINDISTSUFFIX = linux64
 	else
 	ifeq ($(ARCH),ia64)
 		# Position Independent Code required on AMD64/Itanium
 		# Note: We omit the -m64 flag from here since it seems to be unsupported by gcc on IA64
-		CUDD_XCFLAGS = -fPIC -DPIC -DHAVE_IEEE_754 -DBSD -DSIZEOF_VOID_P=8 -DSIZEOF_LONG=8 $(DEBUG) $(WARNINGS)
-		CFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
-		CPPFLAGS = --std=c++11 $(CUDD_XCFLAGS) $(OPTIMISE)
-		LDFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
+		CFLAGS = -fPIC -DPIC -DHAVE_IEEE_754 -DBSD -DSIZEOF_VOID_P=8 -DSIZEOF_LONG=8 $(DEBUG) $(OPTIMISE) $(WARNINGS)
+		CXXFLAGS = --std=c++11 $(CFLAGS)
+		LDFLAGS = $(CFLAGS)
 		BINDISTSUFFIX = linux64
 	else
-		CUDD_XCFLAGS = -m32 -malign-double -DHAVE_IEEE_754 -DBSD $(DEBUG) $(WARNINGS)
-		CFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
-		CPPFLAGS = --std=c++11 $(CUDD_XCFLAGS) $(OPTIMISE)
-		LDFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
+	ifeq ($(ARCH),aarch64)
+		# Position Independent Code required on Aarch64
+		CFLAGS = -fPIC -DPIC -DHAVE_IEEE_754 -DBSD -DSIZEOF_VOID_P=8 -DSIZEOF_LONG=8 $(DEBUG) $(OPTIMISE) $(WARNINGS)
+		CXXFLAGS = --std=c++11 $(CFLAGS)
+		LDFLAGS = $(CFLAGS)
+		BINDISTSUFFIX = linux64
+	else
+		CFLAGS = -m32 -malign-double -DHAVE_IEEE_754 -DBSD $(DEBUG) $(OPTIMISE) $(WARNINGS)
+		CXXFLAGS = --std=c++11 $(CFLAGS)
+		LDFLAGS = $(CFLAGS)
 		BINDISTSUFFIX = linux32
+	endif
 	endif
 	endif
 	BIN_TARGETS=prism.linux xprism.linux
@@ -210,10 +273,9 @@ ifeq ($(OSTYPE),linux)
 endif
 # Solaris
 ifeq ($(OSTYPE),solaris)
-	CUDD_XCFLAGS = -mcpu=ultrasparc -DHAVE_IEEE_754 -DUNIX100 -DEPD_BIG_ENDIAN $(DEBUG) $(WARNINGS)
-	CFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
-	CPPFLAGS = --std=c++11 $(CUDD_XCFLAGS) $(OPTIMISE)
-	LDFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
+	CFLAGS = -mcpu=ultrasparc -DHAVE_IEEE_754 -DUNIX100 -DEPD_BIG_ENDIAN $(DEBUG) $(OPTIMISE) $(WARNINGS)
+	CXXFLAGS = --std=c++11 $(CFLAGS)
+	LDFLAGS = $(CFLAGS)
 	BINDISTSUFFIX = solaris
 	BIN_TARGETS=prism.linux xprism.linux
 	JFLAGS = -encoding UTF8
@@ -227,27 +289,20 @@ endif
 # Cygwin
 ifeq ($(OSTYPE),cygwin)
 	ifeq ($(ARCH),x86_64)
-		C = /usr/bin/x86_64-w64-mingw32-gcc
-		CPP = /usr/bin/x86_64-w64-mingw32-g++
-		CUDD_XCFLAGS = -malign-double -DHAVE_IEEE_754 -DHAVE_GETRLIMIT=0 -DRLIMIT_DATA_DEFAULT=268435456 -DHAVE_SYS_RESOURCE_H=0 -DHAVE_SYS_WAIT_H=0 -DSIZEOF_VOID_P=8 -DSIZEOF_LONG=4 $(DEBUG) $(WARNINGS) -static-libgcc -static-libstdc++
-		CFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
+		CFLAGS = -malign-double -DHAVE_IEEE_754 -DHAVE_GETRLIMIT=0 -DRLIMIT_DATA_DEFAULT=268435456 -DHAVE_SYS_RESOURCE_H=0 -DHAVE_SYS_WAIT_H=0 -DSIZEOF_VOID_P=8 -DSIZEOF_LONG=4 $(DEBUG) $(OPTIMISE) $(WARNINGS) -static-libgcc -static-libstdc++
 		# need -DWIN32 for lpsolve (WIN32 is only defined by mingw/gcc without --std=c++11)
-		CPPFLAGS = --std=c++11 -DWIN32 $(CUDD_XCFLAGS) $(OPTIMISE)
-		LDFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE) -Wl,--add-stdcall-alias -Wl,-Bstatic,--whole-archive -lpthread -Wl,-Bdynamic,--no-whole-archive
+		CXXFLAGS = --std=c++11 -DWIN32 $(CFLAGS)
+		LDFLAGS = $(CFLAGS) -Wl,--add-stdcall-alias -Wl,-Bstatic,--whole-archive -lpthread -Wl,-Bdynamic,--no-whole-archive
 		BINDISTSUFFIX = win64
 	else
-		C = /usr/bin/i686-w64-mingw32-gcc
-		CPP = /usr/bin/i686-w64-mingw32-g++
-		CUDD_XCFLAGS = -march=i686 -malign-double -DHAVE_IEEE_754 -DHAVE_GETRLIMIT=0 -DRLIMIT_DATA_DEFAULT=268435456 -DHAVE_SYS_RESOURCE_H=0 -DHAVE_SYS_WAIT_H=0 $(DEBUG) $(WARNINGS) -static-libgcc -static-libstdc++
-		CFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
+		CFLAGS = -march=i686 -malign-double -DHAVE_IEEE_754 -DHAVE_GETRLIMIT=0 -DRLIMIT_DATA_DEFAULT=268435456 -DHAVE_SYS_RESOURCE_H=0 -DHAVE_SYS_WAIT_H=0 $(DEBUG) $(OPTIMISE) $(WARNINGS) -static-libgcc -static-libstdc++
 		# need -DWIN32 for lpsolve (WIN32 is only defined by mingw/gcc without --std=c++11)
-		CPPFLAGS = --std=c++11 -DWIN32 $(CUDD_XCFLAGS) $(OPTIMISE)
-		LDFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE) -Wl,--add-stdcall-alias -Wl,-Bstatic,--whole-archive -lpthread -Wl,-Bdynamic,--no-whole-archive
+		CXXFLAGS = --std=c++11 -DWIN32 $(CFLAGS)
+		LDFLAGS = $(CFLAGS) -Wl,--add-stdcall-alias -Wl,-Bstatic,--whole-archive -lpthread -Wl,-Bdynamic,--no-whole-archive
 		BINDISTSUFFIX = win32
 	endif
 	BIN_TARGETS=prism.cygwin xprism.linux prism.bat.win xprism.bat.win
 	JFLAGS = -encoding UTF8
-	JAVACC = javacc.bat
 	SHARED = -shared
 	#SHARED = -G
 	EXE = .exe
@@ -259,17 +314,15 @@ endif
 # Darwin
 ifeq ($(OSTYPE),darwin)
 	ifeq ($(ARCH),x86_64)
-		CUDD_XCFLAGS = -arch x86_64 -fPIC -DPIC -DHAVE_IEEE_754 -DBSD -DSIZEOF_VOID_P=8 -DSIZEOF_LONG=8 -fno-common $(DEBUG) $(WARNINGS)
-		CFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
-		CPPFLAGS = --std=c++11 $(CUDD_XCFLAGS) $(OPTIMISE)
-		LDFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE) -Wl,-search_paths_first
+		CFLAGS = -arch x86_64 -fPIC -DPIC -DHAVE_IEEE_754 -DBSD -DSIZEOF_VOID_P=8 -DSIZEOF_LONG=8 -fno-common $(DEBUG) $(OPTIMISE) $(WARNINGS)
+		CXXFLAGS = --std=c++11 $(CFLAGS)
+		LDFLAGS = $(CFLAGS) -Wl,-search_paths_first
 		BINDISTSUFFIX = osx64
 		BIN_TARGETS=prism.darwin64 xprism.linux
 	else
-		CUDD_XCFLAGS = -arch i386 -DHAVE_IEEE_754 -DBSD -fno-common $(DEBUG) $(WARNINGS)
-		CFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE)
-		CPPFLAGS = --std=c++11 $(CUDD_XCFLAGS) $(OPTIMISE)
-		LDFLAGS = $(CUDD_XCFLAGS) $(OPTIMISE) -Wl,-search_paths_first
+		CFLAGS = -arch i386 -DHAVE_IEEE_754 -DBSD -fno-common $(DEBUG) $(OPTIMISE) $(WARNINGS)
+		CXXFLAGS = --std=c++11 $(CFLAGS)
+		LDFLAGS = $(CFLAGS) -Wl,-search_paths_first
 		BINDISTSUFFIX = osx32
 		BIN_TARGETS=prism.darwin32 xprism.linux
 	endif
@@ -282,85 +335,68 @@ ifeq ($(OSTYPE),darwin)
 	CLASSPATHSEP = :
 endif
 
-###############
-# Directories #
-###############
+export CFLAGS CXXFLAGS LDFLAGS JFLAGS LIBPREFIX LIBSUFFIX
 
-# Note that these are all relative to the PRISM directory
-# to make the distribution more 'portable'.
-# If this is a problem, the best solution is to create symlinks.
+##########################################
+# Main part of Makefile: Compiling PRISM #
+##########################################
 
-# For CUDD, we default either to ./cudd or, if that does not exist, ../cudd
-# To override, comment out the first line and use the second (or specify from the command-line)
-CUDD_DIR =		$(shell if [ -d cudd ]; then echo cudd; else echo ../cudd; fi )
-#CUDD_DIR =		cudd
+MAKE_DIRS = dd jdd odd dv prism mtbdd sparse hybrid parser settings userinterface pepa/compiler simulator jltl2ba jltl2dstar explicit pta param strat automata common cex
 
-SRC_DIR =		src
-CLASSES_DIR =	classes
-OBJ_DIR =		obj
-LIB_DIR =		lib
-INCLUDE_DIR =	include
+EXT_PACKAGES = lpsolve55 lp_solve_5.5_java z3
 
-# Now we locate the JNI header files jni.h and jni_md.h
-# (in fact this is the only reason we need JAVA_DIR)
-JAVA_JNI_H_DIR = $(shell \
-	if [ -f "$(JAVA_DIR)"/include/jni.h ]; then echo "$(JAVA_DIR)"/include; \
-	elif [ -f "$(JAVA_DIR)"/Headers/jni.h ]; then echo "$(JAVA_DIR)"/Headers; \
-	elif [ -f "$(JAVA_DIR_BACKUP)"/include/jni.h ]; then echo "$(JAVA_DIR_BACKUP)"/include; \
-	elif [ -f "$(JAVA_DIR_BACKUP)"/Headers/jni.h ]; then echo "$(JAVA_DIR_BACKUP)"/Headers; \
-	else echo ""; fi )
-JAVA_JNI_MD_H_DIR = $(shell (ls "$(JAVA_JNI_H_DIR)"/jni_md.h "$(JAVA_JNI_H_DIR)"/*/jni_md.h | head -n 1 | sed 's/\/jni_md.h//') 2>/dev/null)
-JAVA_INCLUDES = -I $(JAVA_JNI_H_DIR) -I $(JAVA_JNI_MD_H_DIR)
-
-#########################
-# Main part of Makefile #
-#########################
-
-MAKE_DIRS = dd jdd odd dv prism mtbdd sparse hybrid parser settings userinterface pepa/compiler simulator jltl2ba jltl2dstar explicit pta param strat automata
-
-EXT_PACKAGES = lpsolve55 lp_solve_5.5_java
-
-.PHONY: clean javadoc tests
+.PHONY: clean javadoc tests release
 
 # inhibit building in parallel (-j option)
 .NOTPARALLEL:
 
 default: all
 
-all: cuddpackage extpackages prism
+all: cuddpackage ppl extpackages prism
 
+# Build our customised version of CUDD
 cuddpackage: checks
-	@if [ "$(CUDD_DIR)" = "" ]; then echo "Error: Cannot find CUDD"; exit 1; fi
-	@if [ ! -d "$(CUDD_DIR)" ]; then echo "Error: Cannot find CUDD"; exit 1; fi
-	@(if [ ! -h $(CUDD_DIR) ]; then \
-	  echo Making cudd ...; \
-	  cd $(CUDD_DIR) && \
-	  $(MAKE) C="$(C)" CC="$(C)" CPP="$(CPP)" CXX="$(CPP)" \
-	  XCFLAGS="$(CUDD_XCFLAGS)"; \
+	@echo Making cudd ...; \
+	cd $(CUDD_DIR) && \
+	$(MAKE) ICFLAGS="$(DEBUG) $(OPTIMISE) $(WARNINGS)" XCFLAGS="$(filter-out $(DEBUG) $(OPTIMISE) $(WARNINGS),$(CFLAGS))"
+
+# Copy PPL libraries to lib dir
+# (only if not already there, to avoid repeated copying).
+# We check for PPL_JAVA_LIB, which is consistently named
+# and whose presence likely indicates that the files have already been copied.
+# If not found, we use a local copy of the JAR (in ext/ppl_java) since this is needed for compilation.
+ppl: checks
+	@echo Copying PPL files ...; \
+	if [ "$(PPL_DIR)" = "" ]; then \
+		echo "PPL_DIR not specified/detected: cannot copy files"; \
 	else \
-	  echo Skipping cudd make since it is a symlink...; \
-	fi)
+		if [ -f "$(PRISM_LIB_DIR)"/"$(PPL_JAVA_LIB)" ]; then \
+			echo "PPL Java library $(PRISM_LIB_DIR)/$(PPL_JAVA_LIB) detected: nothing to do"; \
+		else \
+			(cp "$(PPL_DIR)"/ppl/"$(PPL_JAVA_LIB)" "$(PRISM_LIB_DIR)" || echo Failed to copy PPL Java library); \
+			(cp "$(PPL_DIR)"/ppl/"$(PPL_JAVA_JAR)" "$(PRISM_LIB_DIR)" || echo Failed to copy PPL Java JAR); \
+			if [ "$(OSTYPE)" = "linux" ]; then \
+				(cp "$(PPL_DIR)"/libppl.so.[0-9][0-9] "$(PRISM_LIB_DIR)" || echo Failed to copy PPL library); \
+			fi; \
+			if [ "$(OSTYPE)" = "darwin" ]; then \
+				(cp "$(PPL_DIR)"/libppl.[0-9][0-9].*lib "$(PRISM_LIB_DIR)" || echo Failed to copy PPL library); \
+			fi; \
+		fi; \
+	fi ; \
+	if [ ! -f "$(PRISM_LIB_DIR)"/"$(PPL_JAVA_JAR)" ]; then \
+		echo "PPL library files not copied; using local copy of JAR"; \
+		cp ext/ppl_java/"$(PPL_JAVA_JAR)" "$(PRISM_LIB_DIR)"; \
+	fi
 
-# use this to force build of cudd (even if dir is just a symlink)
-cuddpackageforce: checks
-	  @echo Making cudd ...; \
-	  cd $(CUDD_DIR) && \
-	  $(MAKE) C="$(C)" CC="$(C)" CPP="$(CPP)" \
-	  XCFLAGS="$(CUDD_XCFLAGS)";
-
-# use this to force a rebuild (with javacc) of the main parser
+# Use this to force a rebuild (with javacc) of the main parser
 parser:
 	@echo Making parser ...; \
-	cd src/parser && \
-	$(MAKE) SRC_DIR="$(SRC_DIR)" touch && \
+	cd $(PRISM_SRC_DIR)/parser && \
+	$(MAKE) touch && \
 	$(MAKE) \
-	SRC_DIR="$(SRC_DIR)" \
-	CLASSES_DIR="$(CLASSES_DIR)" \
-	JAVAC="$(JAVAC) $(JFLAGS)" \
-	JAVACC="$(JAVACC)" \
-	JAVAH="$(JAVAH) $(JFLAGS)" \
 	CLASSPATHSEP="$(CLASSPATHSEP)"
 
+# Build various external libraries needed by PRISM
 extpackages: checks
 	@for ext in $(EXT_PACKAGES); do \
 	  echo Making $$ext ...; \
@@ -368,15 +404,7 @@ extpackages: checks
 	  $(MAKE) \
 	  OSTYPE="$(OSTYPE)" \
 	  ARCH="$(ARCH)" \
-	  C="$(C)" \
-	  CPP="$(CPP)" \
-	  LD="$(LD)" \
-	  CFLAGS="$(CFLAGS)" \
-	  CPPFLAGS="$(CPPFLAGS)" \
-	  LDFLAGS="$(LDFLAGS)" \
 	  SHARED="$(SHARED)" \
-	  LIBPREFIX="$(LIBPREFIX)" \
-	  LIBSUFFIX="$(LIBSUFFIX)" \
 	  LIBMATH="$(LIBMATH)" \
 	  BINDISTSUFFIX="$(BINDISTSUFFIX)" \
 	  JAVA_DIR="$(JAVA_DIR)" \
@@ -385,233 +413,49 @@ extpackages: checks
 	  ) || exit 1; \
 	done
 
+# Compile main PRISM code
+# (we also do some preparatory checks, and build launch scripts afterwards)
 prism: checks make_dirs bin_scripts
 
+# Compile each (top-level) source directory separately
 make_dirs:
-	@mkdir -p bin classes obj/dd obj/jdd obj/odd obj/dv obj/prism obj/mtbdd obj/sparse obj/hybrid obj/simulator
+	@mkdir -p bin $(PRISM_CLASSES_DIR) $(PRISM_OBJ_DIR)/dd $(PRISM_OBJ_DIR)/jdd $(PRISM_OBJ_DIR)/odd $(PRISM_OBJ_DIR)/dv $(PRISM_OBJ_DIR)/prism $(PRISM_OBJ_DIR)/mtbdd $(PRISM_OBJ_DIR)/sparse $(PRISM_OBJ_DIR)/hybrid $(PRISM_OBJ_DIR)/simulator
 	@for dir in $(MAKE_DIRS); do \
-	  echo Making src/$$dir ...; \
-	  (cd src/$$dir && \
+	  echo Making $(PRISM_SRC_DIR)/$$dir ...; \
+	  (cd $(PRISM_SRC_DIR)/$$dir && \
 	  $(MAKE) \
 	  CUDD_DIR="$(CUDD_DIR)" \
-	  SRC_DIR="$(SRC_DIR)" \
-	  CLASSES_DIR="$(CLASSES_DIR)" \
-	  OBJ_DIR="$(OBJ_DIR)" \
-	  LIB_DIR="$(LIB_DIR)" \
-	  PPL_DIR="$(PPL_DIR)" \
-	  INCLUDE_DIR="$(INCLUDE_DIR)" \
 	  JAVA_INCLUDES="$(JAVA_INCLUDES)" \
 	  JAVA_JNI_H_DIR="$(JAVA_JNI_H_DIR)" \
 	  JAVA_JNI_MD_H_DIR="$(JAVA_JNI_MD_H_DIR)" \
-	  C="$(C)" \
-	  CPP="$(CPP)" \
-	  LD="$(LD)" \
-	  JAVAC="$(JAVAC) $(JFLAGS)" \
-	  JAVACC="$(JAVACC)" \
-	  JAVAH="$(JAVAH) $(JFLAGS)" \
-	  CFLAGS="$(CFLAGS)" \
-	  CPPFLAGS="$(CPPFLAGS)" \
-	  LDFLAGS="$(LDFLAGS)" \
 	  SHARED="$(SHARED)" \
 	  EXE="$(EXE)" \
-	  LIBPREFIX="$(LIBPREFIX)" \
-	  LIBSUFFIX="$(LIBSUFFIX)" \
 	  LIBMATH="$(LIBMATH)" \
 	  CLASSPATHSEP="$(CLASSPATHSEP)") \
 	  || exit 1; \
 	done; \
 	if [ "$(OSTYPE)" = "darwin" ]; then \
 	  echo Creating shared library symlinks...; \
-	  (cd $(LIB_DIR) && \
+	  (cd $(PRISM_LIB_DIR) && \
 	  for lib in `ls *$(LIBSUFFIX)`; do ln -fs $$lib `echo $$lib | sed s/$(LIBSUFFIX)/.jnilib/`; done;); \
 	fi
+# On Windows, convert the generated JNI headers using dos2unix
+	@if [ "$(LIBSUFFIX)" = ".dll" ]; then \
+		(dos2unix $(PRISM_INCLUDE_DIR)/jni/*.h) \
+	fi;
 
-tests: testslocal
-	@if [ -d ~/prism/prism-tests ]; then \
-	  cd ~/prism/prism-tests && $(PWD)/etc/scripts/prism-auto -t -m . -p $(PWD)/bin/prism --nailgun --ngprism $(PWD)/bin/ngprism; \
-	else \
-	  echo "Skipping tests"; \
-	fi
-
-testslocal:
-	@if [ -d tests ]; then \
-	  cd tests && $(PWD)/etc/scripts/prism-auto -t -m . -p $(PWD)/bin/prism --nailgun --ngprism $(PWD)/bin/ngprism; \
-	else \
-	  echo "Skipping local tests"; \
-	fi
-
+# Copy/modify the launch scripts and put in the bin directory
 bin_scripts:
 	@for target in $(BIN_TARGETS); do \
 	  target_trunc=`echo $$target | sed 's/\.[^.]*$$//'` && \
-	  echo Copying "$(SRC_DIR)/bin/$$target -> bin/$$target_trunc" && \
-	  cp $(SRC_DIR)/bin/$$target bin/$$target_trunc; \
+	  echo Copying "$(PRISM_SRC_DIR)/bin/$$target -> bin/$$target_trunc" && \
+	  cp $(PRISM_SRC_DIR)/bin/$$target bin/$$target_trunc; \
 	done;
-	@echo Copying "$(OBJ_DIR)/prism/ngprism$(EXE) -> bin/ngprism$(EXE)" && \
-	cp $(OBJ_DIR)/prism/ngprism$(EXE) bin/ngprism$(EXE)
-	@PPL_DIR=$(PPL_DIR) ./install.sh silent
+	@echo Copying "$(PRISM_OBJ_DIR)/prism/ngprism$(EXE) -> bin/ngprism$(EXE)" && \
+	cp $(PRISM_OBJ_DIR)/prism/ngprism$(EXE) bin/ngprism$(EXE)
+	@./install.sh silent
 
-# Unless VERSION has been passed in (as VERSION=xxx),
-# extract version number from Java code using printversion
-VERSION = $(shell SRC_DIR=$(SRC_DIR) $(SRC_DIR)/scripts/printversion.sh 2> /dev/null)
-
-# Grab svn revision number from svnversion, if possible
-REVISION = $(shell svnversion 2> /dev/null)
-
-# Add Revision.java with current svn revision
-add_rev:
-	@echo "Creating $(SRC_DIR)/prism/Revision.java (REVISION = $(REVISION))"
-	echo 'package prism;\npublic class Revision\n{\n\tpublic static String svnRevision = "$(REVISION)";\n}' > $(SRC_DIR)/prism/Revision.java
-
-dist_src: dist_check_version dist_copy clean_all dist_tidy
-
-dist_bin: JFLAGS += -source 1.8 -target 1.8
-dist_bin: dist_check_version all binary dist_tidy dist_bin_copy
-
-dist_check_version:
-	@if [ "$(VERSION)" = "" ]; then echo "Usage: make dist_src/dist_bin VERSION=3.1"; exit 1; fi
-
-# Unless already present, copy cudd/examples/doc to this dir
-# By default, cudd/examples from svn trunk and doc from ~/prism/prism-doc; other options commented out below
-dist_copy:
-	@if [ -e cudd ]; then \
-	  echo "Warning: Not copying cudd since directory already exists"; \
-	else \
-	  echo "Installing CUDD from svn trunk..."; svn -q export https://www.prismmodelchecker.org/svn/prism/prism/trunk/cudd cudd; \
-	fi
-#	  echo "Installing CUDD from ../cudd..."; (SRC_DIST_DIR=`/bin/pwd`; cd ..; tar cf - cudd | tar xf - -C "$$SRC_DIST_DIR");
-	@if [ -e examples ]; then \
-	  echo "Warning: Not copying examples since directory already exists"; \
-	else \
-	  echo "Installing examples from svn trunk..."; svn -q export https://www.prismmodelchecker.org/svn/prism/prism/trunk/prism-examples examples; \
-	fi
-#	  echo "Installing examples from ../prism-examples..."; (SRC_DIST_DIR=`/bin/pwd`; cd ..; tar cf - prism-examples | tar xf - -C "$$SRC_DIST_DIR"); mv prism-examples examples;
-	@if [ -e doc ]; then \
-	  echo "Warning: Not copying manual since directory doc already exists"; \
-	else \
-	  echo "Installing manual from ~/prism/prism-doc..."; \
-	  mkdir doc; \
-	  (SRC_DIST_DIR=`/bin/pwd`; cd ~/prism/prism-doc; tar cf - manual | tar xf - -C "$$SRC_DIST_DIR"/doc); \
-	  cp ~/prism/prism-doc/manual.pdf doc; \
-	fi
-
-dist_bin_copy:
-	@if [ "$(BINDISTSUFFIX)" = "win32" -o "$(BINDISTSUFFIX)" = "win64" ]; then \
-		echo Building NSIS Windows installer...	&& \
-		makensis /NOCD /DPRISM_NAME="PRISM $(VERSION)" /DPRISM_BUILD="prism-$(VERSION)" /DPRISM_BINDISTSUFFIX="$(BINDISTSUFFIX)" /DPRISM_DIR="" src/nsis_script.nsi; \
-	else \
-		BIN_DIST_DIR=`/bin/pwd | sed 's/-src$$//'`"-$(BINDISTSUFFIX)" && \
-		BIN_DIST_DIR_NAME=`basename $$BIN_DIST_DIR` && \
-		echo Creating binary distribution in $$BIN_DIST_DIR... && \
-		mkdir $$BIN_DIST_DIR && \
-		tar cf - README.txt CHANGELOG.txt COPYING.txt install.sh bin etc lib examples doc | ( cd $$BIN_DIST_DIR; tar xfp -) && \
-		echo Zipping $$BIN_DIST_DIR_NAME... && \
-		(cd $$BIN_DIST_DIR/..; tar cfz $$BIN_DIST_DIR_NAME.tar.gz $$BIN_DIST_DIR_NAME); \
-	fi
-#	(cd $$BIN_DIST_DIR/..; zip -rq $$BIN_DIST_DIR_NAME.zip $$BIN_DIST_DIR_NAME);
-
-dist_tidy:
-	@echo Detecting unwanted files...
-	@find . \( -name '*.o' -o -name '*.so' -o -name '*.dll' -o -name '*.exe' \)
-	@find . \( -name '*~*' -o -name '*bak*' \)
-	@find . -name 'log*' | grep -v userinterface/log || test 1
-	@find . -name '*NOTES*' | grep -v src/parser/NOTES | grep -v cudd/RELEASE.NOTES || test 1
-	@echo Processing text files...
-	@find . -type f -name '*.txt' -exec unix2dos {} {} \; 2> /dev/null
-	@find examples -type f ! -name auto -exec unix2dos {} {} \; 2> /dev/null || test 1
-	@echo Processing file permissions...
-	@find . -type f -exec chmod 644 {} \;
-	@find . \( -type d -o -type s \) -exec chmod 755 {} \;
-	@find . -type f  \( -name '*.sh' -o -name '*.so' -o -name '*.dll' \) -exec chmod 755 {} \;
-	@find examples -type f -name 'auto' -exec chmod 755 {} \; || test 1
-	@find bin -type f -exec chmod 755 {} \;
-	@find src/bin -type f -exec chmod 755 {} \;
-	@find etc/scripts -type f -exec chmod 755 {} \;
-
-binary:
-	@echo Generating jar file...
-	@jar cmf src/manifest.txt lib/prism.jar -C classes . -C . images dtds
-
-undist:
-	@rm -rf cudd && ln -s ../cudd cudd
-	@rm -rf doc
-	@rm -rf examples && ln -s ../prism-examples examples
-
-tarcf:
-	@TARCF_DIR=`/bin/pwd | sed 's/.\+\///'` && \
-	if [ $$TARCF_DIR = "." ]; then exit 1; fi && \
-	echo Building tar file "../"$$TARCF_DIR".tar.gz" && \
-	(cd ..; tar cfz $$TARCF_DIR".tar.gz" $$TARCF_DIR)
-
-count_loc:
-	find $(SRC_DIR) -name '*.java' -o -name '*.cc' | xargs wc -l
-
-PRISM_CLASSPATH = "$(CLASSES_DIR)$(CLASSPATHSEP)$(LIB_DIR)/*"
-
-javadoc:
-	@JAVADOC_DIRS=`echo $(MAKE_DIRS) | sed 's/\//./g' | sed 's/ /:/g'` && \mkdir -p javadoc; javadoc $(JFLAGS) -d javadoc -overview $(SRC_DIR)/overview.html -sourcepath $(SRC_DIR) -classpath $(SRC_DIR)$(CLASSPATHSEP)$(PRISM_CLASSPATH) -subpackages $$JAVADOC_DIRS -exclude parser
-
-clean: checks
-	@(for dir in $(MAKE_DIRS); do \
-	  echo Cleaning src/$$dir ...; \
-	  (cd src/$$dir && \
-	  $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean) \
-	  || exit 1; \
-	done; \
-	find $(CLASSES_DIR) -name '*.class' -exec rm {} \; ; \
-	rm -f lib/*jnilib; \
-	rm -f lib/prism.jar; \
-	rm -f $(BIN_PRISM) $(BIN_XPRISM) $(BIN_PRISM_BAT) $(BIN_XPRISM_BAT) )
-
-celan: clean
-
-clean_all: checks clean_cudd clean
-
-clean_cudd:
-	@(cd $(CUDD_DIR) && $(MAKE) distclean)
-
-clean_ext:
-	@(for ext in $(EXT_PACKAGES); do \
-	  echo Cleaning $$ext ...; \
-	  (cd ext/$$ext && \
-	  $(MAKE) -s LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean) \
-	  || exit 1; \
-	done )
-
-clean_dd: checks
-	@(cd src/dd && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_jdd: checks
-	@(cd src/jdd && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_odd: checks
-	@(cd src/odd && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_dv: checks
-	@(cd src/dv && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_prism: checks
-	@(cd src/prism && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_mtbdd: checks
-	@(cd src/mtbdd && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_sparse: checks
-	@(cd src/sparse && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_hybrid: checks
-	@(cd src/hybrid && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_parser: checks
-	@(cd src/parser && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_userinterface: checks
-	@(cd src/userinterface && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_simulator: checks
-	@(cd src/simulator && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_jltl2ba: checks
-	@(cd src/jltl2ba && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_jltl2dstar: checks
-	@(cd src/jltl2dstar && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_explicit: checks
-	@(cd src/explicit && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_pta: checks
-	@(cd src/pta && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_param: checks
-	@(cd src/param && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-clean_strat: checks
-	@(cd src/strat && $(MAKE) -s SRC_DIR="$(SRC_DIR)" CLASSES_DIR="$(CLASSES_DIR)" OBJ_DIR="$(OBJ_DIR)" LIB_DIR="$(LIB_DIR)" EXE="$(EXE)" LIBPREFIX="$(LIBPREFIX)" LIBSUFFIX="$(LIBSUFFIX)" clean)
-
+# Some checks to make sure that the main settings are valid
 checks:
 	@(if [ "$(OSTYPE)" != "linux" -a "$(OSTYPE)" != "solaris" -a "$(OSTYPE)" != "cygwin" -a "$(OSTYPE)" != "darwin" ]; then \
 	  echo "\033[33mTo compile PRISM, the environment variable OSTYPE"; \
@@ -682,5 +526,217 @@ checks:
 	echo "JAVAC: "`which $(JAVAC)`; \
 	echo "PPL_DIR: $(PPL_DIR)" \
 	)
+
+# Misc: count the number of lines of code
+count_loc:
+	find $(PRISM_SRC_DIR) -name '*.java' -o -name '*.cc' | xargs wc -l
+
+###########
+# Testing #
+###########
+
+# Run a single test case from the test suite (useful quick check that the build was ok)
+test:
+	bin/prism ../prism-tests/functionality/verify/dtmcs/dtmc_pctl.pm ../prism-tests/functionality/verify/dtmcs/dtmc_pctl.pm.props -prop 2 -test
+
+# Run a single test case from the test suite that relies on PPL being properly installed
+testppl:
+	bin/prism ../prism-tests/functionality/verify/smgs-multi/ratio.prism ../prism-tests/functionality/verify/smgs-multi/ratio.prism.props -prop 1 -test
+
+# Run all tests from the test suite (in ../prism-tests and ./tests)
+# Optionally, extra arguments for prism-auto are picked up via variable TESTS_ARGS
+tests: testslocal
+	@if [ -d ../prism-tests ]; then \
+	  cd ../prism-tests && "$(PWD)"/etc/scripts/prism-auto -t -m . -p "$(PWD)"/bin/prism --nailgun --ngprism "$(PWD)"/bin/ngprism $(TESTS_ARGS); \
+	else \
+	  echo "Skipping tests"; \
+	fi
+
+# Just display the command to run the test suite on this version of PRISM
+# Optionally, extra arguments for prism-auto are picked up via variable TESTS_ARGS
+testsecho:
+	@echo etc/scripts/prism-auto -t -m --nailgun --ngprism bin/ngprism ../prism-tests -p bin/prism $(TESTS_ARGS)
+
+# Run local tests (in ./tests)
+# Optionally, extra arguments for prism-auto are picked up via variable TESTS_ARGS
+testslocal:
+	@if [ -d tests ]; then \
+	  cd tests && "$(PWD)"/etc/scripts/prism-auto -t -m . -p "$(PWD)"/bin/prism --nailgun --ngprism "$(PWD)"/bin/ngprism $(TESTS_ARGS); \
+	else \
+	  echo "Skipping local tests"; \
+	fi
+
+# Run the tests from ../prism-tests (with different engine settings, picked up from ../prism-tests/all-engines.args)
+# - Export tests are disabled, as there is currently no robust test mechanism for dealing with the
+#   variations in the output of the different engines.
+# - We run with --test-all, as failures for some engines should not abort the tests
+# - We run with a timeout of 1 minute, as some engines take a long time for some properties
+testsfull:
+	cd ../prism-tests && \
+	"$(PWD)"/etc/scripts/prism-auto -t -m . \
+	--skip-export-runs --skip-duplicate-runs --test-all -a all-engines.args --timeout 1m \
+	-p "$(PWD)"/bin/prism --nailgun $(TESTS_ARGS);
+
+##########################
+# Building distributions #
+##########################
+
+# Build prism.jar
+binary:
+	@echo "Generating JAR file ($(PRISM_LIB_DIR)/prism.jar)..."
+	@jar cmf $(PRISM_SRC_DIR)/manifest.txt $(PRISM_LIB_DIR)/prism.jar -C $(PRISM_CLASSES_DIR) . -C . $(PRISM_IMAGES_DIR) $(PRISM_DTDS_DIR)
+
+# Build prism-sources.jar
+source-jar:
+	@echo "Generating sources JAR file ($(PRISM_LIB_DIR)/prism-sources.jar)..."
+	@find $(PRISM_SRC_DIR) -type f -name '*.java' -o -name '*.form' -o -name '*.jj' | sed -e "s/^$(PRISM_SRC_DIR)./-C $(PRISM_SRC_DIR) /" > prism-sources.txt
+	@jar cf $(PRISM_LIB_DIR)/prism-sources.jar @prism-sources.txt
+	@rm -f prism-sources.txt
+
+# Download a local html copy of the manual
+#PRISM_MANUAL_WEBSITE = http://prismmodelchecker.localhost/manual/
+PRISM_MANUAL_WEBSITE = http://www.prismmodelchecker.org/manual/
+doc: clean_doc
+	(cd .. && wget -r -np -k -E -nH --no-cookies --header "Cookie: setskin=offline" --restrict-file-names=windows --reject '*action=sourceblock*' $(PRISM_MANUAL_WEBSITE) $(PRISM_MANUAL_WEBSITE)/pub/skins/offline/images/)
+clean_doc:
+	rm -rf ../manual
+
+# Set up version, in particular for building releases
+# Unless VERSION has been passed in (as VERSION=xxx),
+# extract version number from Java code using printversion
+VERSION = $(shell $(PRISM_SRC_DIR)/scripts/printversion.sh $(PRISM_SRC_DIR) 2> /dev/null)
+
+# Default branch for building source releases
+BRANCH = master
+
+# File/dir names for distribution
+SRC_DIST_DIR = prism-games-$(VERSION)-src
+SRC_DIST_FILE = $(SRC_DIST_DIR).tar.gz
+BIN_DIST_DIR = prism-games-$(VERSION)-$(BINDISTSUFFIX)
+BIN_DIST_FILE = $(BIN_DIST_DIR).tar.gz
+BIN_DIST_INST = $(BIN_DIST_DIR)-installer.exe
+
+# Build a (binary) distribution in the release directory
+
+release: JFLAGS += -source 1.8 -target 1.8
+release: clean_all all binary release_check_version build_release clean_binary
+
+release_check_version:
+	@if [ "$(VERSION)" = "" ]; then echo "Usage: make release VERSION=4.5"; exit 1; fi
+
+build_release:
+	@if [ "$(BINDISTSUFFIX)" = "win32" -o "$(BINDISTSUFFIX)" = "win64" ]; then \
+		echo Creating Windows installer in "release/$(BIN_DIST_INST)"... && \
+		makensis /NOCD /DPRISM_NAME="PRISM-games $(VERSION)" /DPRISM_BUILD="prism-games-$(VERSION)" /DPRISM_BINDISTSUFFIX="$(BINDISTSUFFIX)" /DPRISM_DIR=".." $(PRISM_SRC_DIR)/nsis_script.nsi && \
+		mkdir -p release && \
+		mv ../"$(BIN_DIST_INST)" release; \
+	else \
+		echo Creating binary distribution in "release/$(BIN_DIST_FILE)"... && \
+		mkdir -p release && \
+		rm -rf "release/$(BIN_DIST_DIR)" && \
+		rm -f "release/$(BIN_DIST_FILE)" && \
+		mkdir -p "release/$(BIN_DIST_DIR)" && \
+		tar cf - bin $(PRISM_LIB_DIR) install.sh etc -C .. manual prism-examples CHANGELOG.txt COPYING.txt README.md | tar xf - -C "release/$(BIN_DIST_DIR)" && \
+		(cd release && tar cfz "$(BIN_DIST_FILE)" "$(BIN_DIST_DIR)") && rm -rf "release/$(BIN_DIST_DIR)"; \
+	fi
+
+release_source: release_check_version build_release_source
+
+build_release_source:
+	@echo Creating source distribution from branch "$(BRANCH)" in "release/$(SRC_DIST_FILE)"... && \
+	mkdir -p release && \
+	rm -rf "release/$(SRC_DIST_DIR)" && \
+	rm -f "release/$(SRC_DIST_FILE)" && \
+	mkdir -p "release/$(SRC_DIST_DIR)" && \
+	(cd .. && git archive $(BRANCH) --format=tar) | tar xf - -C "release/$(SRC_DIST_DIR)" && \
+	rm -rf "release/$(SRC_DIST_DIR)/prism/examples" && \
+	rm -rf "release/$(SRC_DIST_DIR)/prism/tests" && \
+	(cd release && tar cfz "$(SRC_DIST_FILE)" "$(SRC_DIST_DIR)") && rm -rf "release/$(SRC_DIST_DIR)"
+
+# Build Javadoc (and put in javadoc directory)
+
+PRISM_CLASSPATH = "$(PRISM_CLASSES_DIR)$(CLASSPATHSEP)$(PRISM_LIB_DIR)/*"
+
+javadoc:
+	@JAVADOC_DIRS=`echo $(MAKE_DIRS) | sed 's/\//./g' | sed 's/ /:/g'` && \mkdir -p javadoc; javadoc $(JFLAGS) -d javadoc -overview $(PRISM_SRC_DIR)/overview.html -sourcepath $(PRISM_SRC_DIR) -classpath $(PRISM_SRC_DIR)$(CLASSPATHSEP)$(PRISM_CLASSPATH) -subpackages $$JAVADOC_DIRS -exclude parser
+
+###############
+# Cleaning up #
+###############
+
+# Clean main PRISM build (not CUDD or external libs)
+clean: checks
+	@(for dir in $(MAKE_DIRS); do \
+	  echo Cleaning $(PRISM_SRC_DIR)/$$dir ...; \
+	  (cd $(PRISM_SRC_DIR)/$$dir && \
+	  $(MAKE) -s EXE="$(EXE)" clean) \
+	  || exit 1; \
+	done; \
+	find $(PRISM_CLASSES_DIR) -name '*.class' -exec rm {} \; ; \
+	rm -f $(PRISM_LIB_DIR)/*jnilib; \
+	rm -f $(PRISM_LIB_DIR)/prism.jar; \
+	rm -f $(PRISM_LIB_DIR)/prism-sources.jar; \
+	rm -f $(BIN_PRISM) $(BIN_XPRISM) $(BIN_PRISM_BAT) $(BIN_XPRISM_BAT) )
+
+celan: clean
+
+# Clean PRISM + CUDD and external libs
+clean_all: checks clean_cudd clean_ppl clean_ext clean
+
+clean_cudd:
+	@(cd $(CUDD_DIR) && $(MAKE) distclean)
+
+# Remove PPL libraries copied to lib
+clean_ppl:
+	@rm -f $(PRISM_LIB_DIR)/libppl* $(PRISM_LIB_DIR)/"$(PPL_JAVA_JAR)"
+
+clean_ext:
+	@(for ext in $(EXT_PACKAGES); do \
+	  echo Cleaning $$ext ...; \
+	  (cd ext/$$ext && \
+	  $(MAKE) -s clean) \
+	  || exit 1; \
+	done )
+
+# Remove just the prism.jar binary
+clean_binary:
+	@echo "Removing JAR file ($(PRISM_LIB_DIR)/prism.jar)..."
+	@rm -f $(PRISM_LIB_DIR)/prism.jar
+
+# Clear individual directories (sometimes useful)
+clean_dd: checks
+	@(cd $(PRISM_SRC_DIR)/dd && $(MAKE) -s EXE="$(EXE)" clean)
+clean_jdd: checks
+	@(cd $(PRISM_SRC_DIR)/jdd && $(MAKE) -s EXE="$(EXE)" clean)
+clean_odd: checks
+	@(cd $(PRISM_SRC_DIR)/odd && $(MAKE) -s EXE="$(EXE)" clean)
+clean_dv: checks
+	@(cd $(PRISM_SRC_DIR)/dv && $(MAKE) -s EXE="$(EXE)" clean)
+clean_prism: checks
+	@(cd $(PRISM_SRC_DIR)/prism && $(MAKE) -s EXE="$(EXE)" clean)
+clean_mtbdd: checks
+	@(cd $(PRISM_SRC_DIR)/mtbdd && $(MAKE) -s EXE="$(EXE)" clean)
+clean_sparse: checks
+	@(cd $(PRISM_SRC_DIR)/sparse && $(MAKE) -s EXE="$(EXE)" clean)
+clean_hybrid: checks
+	@(cd $(PRISM_SRC_DIR)/hybrid && $(MAKE) -s EXE="$(EXE)" clean)
+clean_parser: checks
+	@(cd $(PRISM_SRC_DIR)/parser && $(MAKE) -s EXE="$(EXE)" clean)
+clean_userinterface: checks
+	@(cd $(PRISM_SRC_DIR)/userinterface && $(MAKE) -s EXE="$(EXE)" clean)
+clean_simulator: checks
+	@(cd $(PRISM_SRC_DIR)/simulator && $(MAKE) -s EXE="$(EXE)" clean)
+clean_jltl2ba: checks
+	@(cd $(PRISM_SRC_DIR)/jltl2ba && $(MAKE) -s EXE="$(EXE)" clean)
+clean_jltl2dstar: checks
+	@(cd $(PRISM_SRC_DIR)/jltl2dstar && $(MAKE) -s EXE="$(EXE)" clean)
+clean_explicit: checks
+	@(cd $(PRISM_SRC_DIR)/explicit && $(MAKE) -s EXE="$(EXE)" clean)
+clean_pta: checks
+	@(cd $(PRISM_SRC_DIR)/pta && $(MAKE) -s EXE="$(EXE)" clean)
+clean_param: checks
+	@(cd $(PRISM_SRC_DIR)/param && $(MAKE) -s EXE="$(EXE)" clean)
+clean_strat: checks
+	@(cd $(PRISM_SRC_DIR)/strat && $(MAKE) -s EXE="$(EXE)" clean)
 
 #################################################

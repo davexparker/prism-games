@@ -146,8 +146,9 @@ jint flags
 		title += "), interval";
 
 		iterationExport.reset(new ExportIterations(title.c_str()));
-		iterationExport->exportVector(sol_below, rvars, num_rvars, odd, 0);
-		iterationExport->exportVector(sol_above, rvars, num_rvars, odd, 1);
+		PM_PrintToMainLog(env, "Exporting iterations to %s\n", iterationExport->getFileName().c_str());
+		iterationExport->exportVector(sol_below, (transpose?cvars:rvars), num_rvars, odd, 0);
+		iterationExport->exportVector(sol_above, (transpose?cvars:rvars), num_rvars, odd, 1);
 	}
 
 	// get setup time
@@ -211,8 +212,8 @@ jint flags
 		sol_above = tmp;
 
 		if (iterationExport) {
-			iterationExport->exportVector(sol_below, rvars, num_rvars, odd, 0);
-			iterationExport->exportVector(sol_above, rvars, num_rvars, odd, 1);
+			iterationExport->exportVector(sol_below, (transpose?cvars:rvars), num_rvars, odd, 0);
+			iterationExport->exportVector(sol_above, (transpose?cvars:rvars), num_rvars, odd, 1);
 		}
 
 		// check convergence
@@ -261,12 +262,21 @@ jint flags
 		Cudd_Ref(sol_above);
 
 		// compute midpoint for result
-		DdNode* difference = DD_Apply(ddman, APPLY_MINUS, sol_above, sol_below);
-		difference = DD_Apply(ddman, APPLY_DIVIDE, difference, DD_Constant(ddman, 2.0));
-
-		Cudd_Ref(sol_below);
-		result = DD_Apply(ddman, APPLY_PLUS, sol_below, difference);
+		// use x + ( y - x ) / 2 instead of (x+y)/2 for better numerical stability
 		// TODO: ensure that below <= result <= above?
+		DdNode* difference = DD_Apply(ddman, APPLY_MINUS, sol_above, sol_below);
+		Cudd_Ref(sol_below);
+		Cudd_Ref(difference);
+		result = DD_Apply(ddman, APPLY_PLUS, sol_below, DD_Apply(ddman, APPLY_DIVIDE, difference, DD_Constant(ddman, 2.0)));
+		
+		// also compute/store accuracy
+		// TODO: handle cases where result is zero
+		if (term_crit == TERM_CRIT_RELATIVE) {
+			Cudd_Ref(result);
+			difference = DD_Apply(ddman, APPLY_DIVIDE, difference, result);
+		}
+		last_error_bound = DD_FindMax(ddman, difference);
+		Cudd_RecursiveDeref(ddman, difference);
 
 		// export midpoint as vector above and below
 		if (iterationExport) {

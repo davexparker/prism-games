@@ -77,6 +77,12 @@ public class StateValuesVoid implements StateValues
 	}
 
 	@Override
+	public void setAccuracy(Accuracy accuracy)
+	{
+		throw new UnsupportedOperationException();
+	}
+	
+	@Override
 	public StateValuesDV convertToStateValuesDV()
 	{
 		throw new UnsupportedOperationException();
@@ -239,17 +245,11 @@ public class StateValuesVoid implements StateValues
 	}
 
 	@Override
-	public void print(PrismLog log) throws PrismException
+	public Accuracy getAccuracy()
 	{
 		throw new UnsupportedOperationException();
 	}
-
-	@Override
-	public void print(PrismLog log, boolean printSparse, boolean printMatlab, boolean printStates) throws PrismException
-	{
-		throw new UnsupportedOperationException();
-	}
-
+	
 	@Override
 	public void print(PrismLog log, boolean printSparse, boolean printMatlab, boolean printStates, boolean printIndices) throws PrismException
 	{
@@ -257,13 +257,19 @@ public class StateValuesVoid implements StateValues
 	}
 
 	@Override
-	public void printFiltered(PrismLog log, JDDNode filter) throws PrismException
+	public void printFiltered(PrismLog log, JDDNode filter, boolean printSparse, boolean printMatlab, boolean printStates, boolean printIndizes) throws PrismException
 	{
 		throw new UnsupportedOperationException();
 	}
 
 	@Override
-	public void printFiltered(PrismLog log, JDDNode filter, boolean printSparse, boolean printMatlab, boolean printStates) throws PrismException
+	public void iterate(StateAndValueConsumer consumer, boolean sparse)
+	{
+		throw new UnsupportedOperationException();
+	}
+
+	@Override
+	public void iterateFiltered(JDDNode filter, StateAndValueConsumer consumer, boolean sparse)
 	{
 		throw new UnsupportedOperationException();
 	}

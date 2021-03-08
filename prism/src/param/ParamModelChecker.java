@@ -70,6 +70,7 @@ import parser.ast.ExpressionFilter.FilterOperator;
 import parser.ast.ExpressionForAll;
 import parser.ast.ExpressionFormula;
 import parser.ast.ExpressionFunc;
+import parser.ast.ExpressionITE;
 import parser.ast.ExpressionLabel;
 import parser.ast.ExpressionLiteral;
 import parser.ast.ExpressionProb;
@@ -92,8 +93,6 @@ import parser.type.TypePathDouble;
 import prism.ModelType;
 import prism.PrismComponent;
 import prism.PrismException;
-import prism.PrismLog;
-import prism.PrismPrintStreamLog;
 import prism.PrismSettings;
 import prism.PrismNotSupportedException;
 import prism.Result;
@@ -371,6 +370,8 @@ final public class ParamModelChecker extends PrismComponent
 			res = checkExpressionUnaryOp(model, (ExpressionUnaryOp) expr, needStates);
 		} else if (expr instanceof ExpressionBinaryOp) {
 			res = checkExpressionBinaryOp(model, (ExpressionBinaryOp) expr, needStates);
+		} else if (expr instanceof ExpressionITE) {
+			res = checkExpressionITE(model, (ExpressionITE) expr, needStates);
 		} else if (expr instanceof ExpressionLabel) {
 			res = checkExpressionLabel(model, (ExpressionLabel) expr, needStates);
 		} else if (expr instanceof ExpressionFormula) {
@@ -464,6 +465,21 @@ final public class ParamModelChecker extends PrismComponent
 		res2.clearNotNeeded(needStates);
 
 		return res1.binaryOp(parserBinaryOpToRegionOp(expr.getOperator()), res2);
+	}
+
+	/**
+	 * Model check an If-Then-Else operator.
+	 */
+	protected RegionValues checkExpressionITE(ParamModel model, ExpressionITE expr, BitSet needStates) throws PrismException
+	{
+		RegionValues resI = checkExpression(model, expr.getOperand1(), needStates);
+		RegionValues resT = checkExpression(model, expr.getOperand2(), needStates);
+		RegionValues resE = checkExpression(model, expr.getOperand3(), needStates);
+		resI.clearNotNeeded(needStates);
+		resT.clearNotNeeded(needStates);
+		resE.clearNotNeeded(needStates);
+
+		return resI.ITE(resT, resE);
 	}
 
 	/**
@@ -1004,7 +1020,8 @@ final public class ParamModelChecker extends PrismComponent
 		boolean min = false;
 
 		// Get info from reward operator
-		RewardStruct rewStruct = expr.getRewardStructByIndexObject(modulesFile, constantValues);
+		
+		RewardStruct rewStruct = modulesFile.getRewardStruct(expr.getRewardStructIndexByIndexObject(modulesFile.getRewardStructNames(), constantValues));
 		RelOp relOp = expr.getRelOp();
 		rb = expr.getReward();
 		if (rb != null) {
@@ -1106,7 +1123,13 @@ final public class ParamModelChecker extends PrismComponent
 			String action = rewStruct.getSynch(rewItem);
 			boolean isTransitionReward = rewStruct.getRewardStructItem(rewItem).isTransitionReward();
 			for (int state = 0; state < numStates; state++) {
-				if (guard.evaluateBoolean(constantValues, statesList.get(state))) {
+				if (isTransitionReward && model.isDeadlockState(state)) {
+					// As state is a deadlock state, any outgoing transition
+					// was added to "fix" the deadlock and thus does not get a reward.
+					// Skip to next state
+					continue;
+				}
+				if (guard.evaluateExact(constantValues, statesList.get(state)).toBoolean()) {
 					int[] varMap = new int[statesList.get(0).varValues.length];
 					for (int i = 0; i < varMap.length; i++) {
 						varMap[i] = i;

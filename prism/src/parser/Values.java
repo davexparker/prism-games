@@ -26,11 +26,9 @@
 
 package parser;
 
-import java.text.DecimalFormat;
-import java.text.NumberFormat;
 import java.util.ArrayList;
-import java.util.Locale;
 
+import param.BigRational;
 import parser.type.Type;
 import parser.type.TypeBool;
 import parser.type.TypeDouble;
@@ -43,7 +41,7 @@ import prism.PrismUtils;
  * Class to store a list of typed constant/variable values.
  * (Basically, just a mapping from String to Object)
  */
-public class Values //implements Comparable
+public class Values implements Cloneable //implements Comparable
 {
 	protected ArrayList<String> names;
 	protected ArrayList<Object> values;
@@ -60,18 +58,25 @@ public class Values //implements Comparable
 	}
 	
 	/**
-	 * Construct a new Values object by copying an existing one
+	 * Construct a new Values object by copying an existing one.
+	 * If the existing one is null, it is treated as empty. 
 	 */
 	@SuppressWarnings("unchecked")
 	public Values(Values v)
 	{
-		names = (ArrayList<String>)v.names.clone();
-		values = (ArrayList<Object>)v.values.clone();
+		if (v == null) {
+			names = new ArrayList<String>();
+			values = new ArrayList<Object>();
+		} else {
+			names = (ArrayList<String>) v.names.clone();
+			values = (ArrayList<Object>) v.values.clone();
+		}
 	}
 	
 	/**
 	 * Construct a new Values object by merging two existing ones.
 	 * There is no checking for duplicates.
+	 * Either can be null and, if so, is treated as empty. 
 	 */
 	public Values(Values v1, Values v2)
 	{
@@ -81,6 +86,7 @@ public class Values //implements Comparable
 	
 	/**
 	 * Construct a new Values object by copying existing State object.
+	 * If it is null, it is treated as empty. 
 	 * Need access to model info for variable names.
 	 * @param s State object to copy.
 	 * @param modelInfo Corresponding modelInfo (for variable info/ordering)
@@ -88,9 +94,9 @@ public class Values //implements Comparable
 	public Values(State s, ModelInfo modelInfo)
 	{
 		this();
-		int i, n;
-		n = s.varValues.length;
-		for (i = 0; i < n; i++) {
+		if (s == null) return;
+		int n = s.varValues.length;
+		for (int i = 0; i < n; i++) {
 			addValue(modelInfo.getVarName(i), s.varValues[i]);
 		}
 	}
@@ -108,7 +114,8 @@ public class Values //implements Comparable
 	}
 	
 	/**
-	 * Add multiple values.
+	 * Add multiple values, specified as a {@link Values} object {@code v}.
+	 * If {@code v} is null, it is treated as empty. 
 	 * (Note: there is no checking for duplication/inconsistencies/etc.)
 	 */
 	public void addValues(Values v)
@@ -223,6 +230,7 @@ public class Values //implements Comparable
 		Object o = values.get(i);
 		if (o instanceof Integer) return TypeInt.getInstance();
 		if (o instanceof Double)  return TypeDouble.getInstance();
+		if (o instanceof BigRational) return TypeDouble.getInstance();
 		if (o instanceof Boolean) return TypeBool.getInstance();
 		else return null;
 	}
@@ -242,16 +250,19 @@ public class Values //implements Comparable
 	public int getIntValue(int i) throws PrismLangException
 	{
 		Object o;
-		
+
 		o = values.get(i);
-		
+
 		if (o instanceof Boolean) {
 			return ((Boolean)o).booleanValue() ? 1 : 0;
 		}
 		if (o instanceof Integer) {
 			return ((Integer)o).intValue();
 		}
-		
+		if (o instanceof BigRational) {
+			return ((BigRational)o).toInt();
+		}
+
 		throw new PrismLangException("Cannot get integer value for \"" + getName(i) + "\"");
 	}
 
@@ -274,6 +285,9 @@ public class Values //implements Comparable
 		if (o instanceof Double) {
 			return ((Double)o).doubleValue();
 		}
+		if (o instanceof BigRational) {
+			return ((BigRational)o).doubleValue();
+		}
 		
 		throw new PrismLangException("Cannot get double value for \"" + getName(i) + "\"");
 	}
@@ -284,14 +298,16 @@ public class Values //implements Comparable
 	public boolean getBooleanValue(int i) throws PrismLangException
 	{
 		Object o;
-		
+
 		o = values.get(i);
-		
-		if (!(o instanceof Boolean)) {
+
+		if (o instanceof Boolean) {
+			return ((Boolean)o).booleanValue();
+		} else if (o instanceof BigRational) {
+			return ((BigRational)o).toBoolean();
+		} else {
 			throw new PrismLangException("Cannot get boolean value for \"" + getName(i) + "\"");
 		}
-		
-		return ((Boolean)o).booleanValue();
 	}
 
 	/**
@@ -405,26 +421,19 @@ public class Values //implements Comparable
 // 		return 0;
 // 	}
 
+	@SuppressWarnings("unchecked")
 	@Override
-	public Object clone()
+	public Values clone()
 	{
-		Values res;
-		int i, n;
-		String s;
-		Object o;
-		
-		res = new Values();
-		n = getNumValues();
-		for (i = 0; i < n; i++) {
-			s = getName(i);
-			o = getValue(i);
-			if (o instanceof Integer) o = new Integer(((Integer)o).intValue());
-			else if (o instanceof Double) o = new Double(((Double)o).doubleValue());
-			else o = new Boolean(((Boolean)o).booleanValue());
-			res.addValue(s, o);
+		Values clone;
+		try {
+			clone = (Values) super.clone();
+		} catch (CloneNotSupportedException e) {
+			throw new InternalError("Object#clone is expected to work for Cloneable objects.", e);
 		}
-		
-		return res;
+		clone.names = (ArrayList<String>) names.clone();
+		clone.values = (ArrayList<Object>) values.clone();
+		return clone;
 	}
 
 	@Override

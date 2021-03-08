@@ -304,7 +304,7 @@ public abstract class ASTElement
 	 */
 	public ASTElement replaceConstants(Values constantValues) throws PrismLangException
 	{
-		return evaluatePartially(new EvaluateContextValues(constantValues, null));
+		return evaluatePartially(new EvaluateContextConstants(constantValues));
 	}
 
 	/**
@@ -322,6 +322,18 @@ public abstract class ASTElement
 		return (ASTElement) accept(visitor);
 	}
 
+	/*** ***/
+	
+	public Vector<String> getPrimedVars() throws PrismLangException
+	{
+		Vector<String> v = new Vector<String>();
+		GetPrimedVars visitor = new GetPrimedVars(v);
+		accept(visitor);
+		return v;
+	}
+	
+	/*** ***/
+	
 	/**
 	 * Get all variables (i.e. ExpressionVar objects), store names in set.
 	 */
@@ -462,6 +474,16 @@ public abstract class ASTElement
 	}
 
 	/**
+	 * Evaluate partially: replace some constants with actual values. 
+	 * Constants are specified as a Values object.
+	 * Warning: Unlike evaluate(), evaluatePartially() methods modify (and return) the expression. 
+	 */
+	public ASTElement evaluatePartially(Values constantValues) throws PrismLangException
+	{
+		return evaluatePartially(new EvaluateContextValues(constantValues, null));
+	}
+
+	/**
 	 * Evaluate partially: replace some constants and variables with actual values. 
 	 * Constants/variables are specified as Values objects; either can be left null.
 	 * Warning: Unlike evaluate(), evaluatePartially() methods modify (and return) the expression. 
@@ -469,6 +491,25 @@ public abstract class ASTElement
 	public ASTElement evaluatePartially(Values constantValues, Values varValues) throws PrismLangException
 	{
 		return evaluatePartially(new EvaluateContextValues(constantValues, varValues));
+	}
+
+	/**
+	 * Evaluate partially: replace variables with actual values, specified as a State object.
+	 * Warning: Unlike evaluate(), evaluatePartially() methods modify (and return) the expression. 
+	 */
+	public ASTElement evaluatePartially(State state) throws PrismLangException
+	{
+		return evaluatePartially(new EvaluateContextState(state));
+	}
+
+	/**
+	 * Evaluate partially: replace variables with actual values, specified as a State object.
+	 * Constant values are supplied as a Values object. 
+	 * Warning: Unlike evaluate(), evaluatePartially() methods modify (and return) the expression. 
+	 */
+	public ASTElement evaluatePartially(Values constantValues, State state) throws PrismLangException
+	{
+		return evaluatePartially(new EvaluateContextState(constantValues, state));
 	}
 
 	/**
@@ -497,6 +538,17 @@ public abstract class ASTElement
 	public int computeProbNesting() throws PrismLangException
 	{
 		ComputeProbNesting visitor = new ComputeProbNesting();
+		accept(visitor);
+		return visitor.getMaxNesting();
+	}
+
+	/**
+	 * Compute (maximum) number of nested probabilistic operators (P, S, R).
+	 * Optionally, pass a properties file for looking up property references.
+	 */
+	public int computeProbNesting(PropertiesFile propertiesFile) throws PrismLangException
+	{
+		ComputeProbNesting visitor = new ComputeProbNesting(propertiesFile);
 		accept(visitor);
 		return visitor.getMaxNesting();
 	}

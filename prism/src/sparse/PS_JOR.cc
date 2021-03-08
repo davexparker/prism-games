@@ -209,6 +209,7 @@ jdouble omega		// omega (over-relaxation parameter)
 		title += ")";
 
 		iterationExport.reset(new ExportIterations(title.c_str()));
+		PS_PrintToMainLog(env, "Exporting iterations to %s\n", iterationExport->getFileName().c_str());
 		iterationExport->exportVector(soln, n, 0);
 	}
 
@@ -313,6 +314,10 @@ jdouble omega		// omega (over-relaxation parameter)
 	
 	// if the iterative method didn't terminate, this is an error
 	if (!done) { delete[] soln; soln = NULL; PS_SetErrorMessage("Iterative method did not converge within %d iterations.\nConsider using a different numerical method or increasing the maximum number of iterations", iters); }
+	
+	// the difference between vector values is not a reliable error bound
+	// but we store it anyway in case it is useful for estimating a bound
+	last_error_bound = measure.value();
 	
 	// catch exceptions: register error, free memory
 	} catch (std::bad_alloc e) {

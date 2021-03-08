@@ -29,6 +29,11 @@ package explicit;
 
 import prism.PrismException;
 
+/**
+ * Class to efficiently and reliably compute probabilities for the Poisson distribution,
+ * truncating above and below for a provided error bound. Implements the algorithm from:
+ * B. Fox and P. Glynn, Computing Poisson Probabilities, Communications of the ACM 31(4):440-445, 1988.
+ */
 public final class FoxGlynn
 {
 	// constructor parameters
@@ -40,6 +45,18 @@ public final class FoxGlynn
 	private double totalWeight;
 	private double[] weights;
 
+	/**
+	 * Computes the probabilities for the Poisson distribution with rate {@code qtmax}.
+	 * The {@code i}th probability is returned for {@code L<=i<=R}, where {@code L} and {@code R}
+	 * are determined according to the requested accuracy and are available from the methods
+	 * {@link #getLeftTruncationPoint()} and {@link #getRightTruncationPoint()}.
+	 * The probabilities are given in an array returned by {@link #getWeights()};
+	 * these should be normalised by dividing by {@link #getTotalWeight()}.
+	 * The sum of the probabilities will be greater than equal to {@code 1-acc}.
+	 * Furthermore, the sum of probabilities for {@code i<L} and {@code i>R} are both {@code <=acc/2}.
+	 * Thresholds for underflow ({@code uf}) and overflow ({@code ov}) should also be given.
+	 * Note that the Fox-Glynn method requires accuracy to be at least 1e-10.
+	 */
 	public FoxGlynn(double qtmax, double uf, double of, double acc) throws PrismException
 	{
 		q_tmax = qtmax;
@@ -72,9 +89,14 @@ public final class FoxGlynn
 	private final void run() throws PrismException
 	{
 		if (q_tmax == 0.0) {
-			throw new PrismException("Overflow: TA parameter qtmax = time * maxExitRate = 0.");
+			throw new PrismException("Overflow: TA parameter qtmax = time * maxExitRate = 0");
 		}
-		else if (q_tmax < 400)
+
+		if (accuracy < 1e-10) {
+			throw new PrismException("Overflow: Accuracy is smaller than Fox Glynn can handle (must be at least 1e-10)");
+		}
+
+		if (q_tmax < 400)
 		{ //here naive approach should have better performance than Fox Glynn
 			final double expcoef = Math.exp(-q_tmax); //the "e^-lambda" part of p.m.f. of Poisson dist.
 			int k; //denotes that we work with event "k steps occur"
@@ -91,6 +113,9 @@ public final class FoxGlynn
 			//add further steps until you have accumulated enough
 			k = 1;
 			do {
+				// TODO: catch case where lastval gets so small that
+				// accnum never reaches desval due to rounding/floating point precision errors (infinite loop)
+
 				lastval *= q_tmax / k; // invariant: lastval = q_tmax^k / k!
 				accum += lastval;
 				w.add(lastval * expcoef);
@@ -112,9 +137,6 @@ public final class FoxGlynn
 		}
 		else
 		{ //use actual Fox Glynn for q_tmax>400
-			if (accuracy < 1e-10) {
-				throw new PrismException("Overflow: Accuracy is smaller than Fox Glynn can handle (must be at least 1e-10).");
-			}
 			final double factor = 1e+10; //factor from the paper, it has no real explanation there
 			final int m = (int) q_tmax; //mode
 			//run FINDER to get left, right and weight[m]

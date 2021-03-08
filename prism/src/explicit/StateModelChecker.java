@@ -65,9 +65,8 @@ import parser.type.TypeDouble;
 import parser.type.TypeInt;
 import parser.visitor.ASTTraverseModify;
 import parser.visitor.ReplaceLabels;
+import prism.Accuracy;
 import prism.Filter;
-import prism.GamesModelChecker;
-import prism.ModelGenerator;
 import prism.ModelInfo;
 import prism.ModelType;
 import prism.Prism;
@@ -78,6 +77,7 @@ import prism.PrismLog;
 import prism.PrismNotSupportedException;
 import prism.PrismSettings;
 import prism.Result;
+import prism.RewardGenerator;
 import strat.Strategy;
 
 /**
@@ -114,26 +114,23 @@ public class StateModelChecker extends PrismComponent
 
 	// Generate/store a strategy during model checking?
 	protected boolean genStrat = false;
+	// Should any generated strategies should be restricted to the states reachable under them?
+	protected boolean restrictStratToReach = true;
 
 	// Strategy generation
 	protected boolean generateStrategy = false;
 	protected boolean implementStrategy = false;
 	protected Strategy strategy = null;
 
-        // Stored Pareto sets
-        protected Pareto pareto_set = null;
-        // Stored parameters
-        protected MultiParameters parsed_params = null;
-        
-        // Computing Pareto sets?
-        protected boolean computePareto = true; // computing Pareto set, or doing actual model checking?
-
-        // Cancel computation if first element true
-        protected boolean[] cancel_computation = new boolean[1]; // false by default	
+	// Stored Pareto sets
+	protected Pareto pareto_set = null;
+	// Stored parameters
+	protected MultiParameters parsed_params = null;
+	// Computing Pareto sets?
+	protected boolean computePareto = true; // computing Pareto set, or doing actual model checking?
 
 	// Do bisimulation minimisation before model checking?
 	protected boolean doBisim = false;
-
 
 	// Do topological value iteration?
 	protected boolean doTopologicalValueIteration = false;
@@ -147,7 +144,7 @@ public class StateModelChecker extends PrismComponent
 	// Model info (for reward structures, etc.)
 	protected ModulesFile modulesFile = null;
 	protected ModelInfo modelInfo = null;
-	protected ModelGenerator modelGen = null;
+	protected RewardGenerator rewardGen = null;
 
 	// Properties file (for labels, constants, etc.)
 	protected PropertiesFile propertiesFile = null;
@@ -177,6 +174,9 @@ public class StateModelChecker extends PrismComponent
 		// If present, initialise settings from PrismSettings
 		if (settings != null) {
 			verbosity = settings.getBoolean(PrismSettings.PRISM_VERBOSE) ? 10 : 1;
+			setDoIntervalIteration(settings.getBoolean(PrismSettings.PRISM_INTERVAL_ITER));
+			setDoTopologicalValueIteration(settings.getBoolean(PrismSettings.PRISM_TOPOLOGICAL_VI));
+			setDoPmaxQuotient(settings.getBoolean(PrismSettings.PRISM_PMAX_QUOTIENT));
 			tolerance = settings.getDouble(PrismSettings.PRISM_PARETO_EPSILON);
 		}
 	}
@@ -205,14 +205,23 @@ public class StateModelChecker extends PrismComponent
 		case CTMC:
 			mc = new CTMCModelChecker(parent);
 			break;
+		case POMDP:
+			mc = new POMDPModelChecker(parent);
+			break;
 		case CTMDP:
 			mc = new CTMDPModelChecker(parent);
+			break;
+		case CSG:
+			mc = new CSGModelChecker(parent);
 			break;
 		case STPG:
 			mc = new STPGModelChecker(parent);
 			break;
 		case SMG:
 			mc = new SMGModelChecker(parent);
+			break;
+		case LTS:
+			mc = new NonProbModelChecker(parent);
 			break;
 		default:
 			throw new PrismException("Cannot create model checker for model type " + modelType);
@@ -234,7 +243,7 @@ public class StateModelChecker extends PrismComponent
 	 */
 	public void inheritSettings(StateModelChecker other)
 	{
-		setModulesFileAndPropertiesFile(other.modelInfo, other.propertiesFile, other.modelGen);
+		setModelCheckingInfo(other.modelInfo, other.propertiesFile, other.rewardGen);
 		setLog(other.getLog());
 		setVerbosity(other.getVerbosity());
 		setExportTarget(other.getExportTarget());
@@ -247,6 +256,7 @@ public class StateModelChecker extends PrismComponent
 		setExportProductVectorFilename(other.getExportProductVectorFilename());
 		setStoreVector(other.getStoreVector());
 		setGenStrat(other.getGenStrat());
+		setRestrictStratToReach(other.getRestrictStratToReach());
 		setDoBisim(other.getDoBisim());
 		tolerance = other.tolerance;
 		setDoIntervalIteration(other.getDoIntervalIteration());
@@ -264,16 +274,10 @@ public class StateModelChecker extends PrismComponent
 
 	// Set methods for flags/settings
 
-        public void setCancel(boolean[] cancel_computation)
-        {
-	    this.cancel_computation = cancel_computation;
-        }
-
-
-        public void setComputeParetoSet(boolean computePareto)
-        {
-	        this.computePareto = computePareto;
-        }
+	public void setComputeParetoSet(boolean computePareto)
+	{
+		this.computePareto = computePareto;
+	}
 
 	/**
 	 * Set verbosity level, i.e. amount of output produced.
@@ -337,6 +341,14 @@ public class StateModelChecker extends PrismComponent
 	public void setGenStrat(boolean genStrat)
 	{
 		this.genStrat = genStrat;
+	}
+
+	/**
+	 * Specify whether or not any generated strategies should be restricted to the states reachable under them.
+	 */
+	public void setRestrictStratToReach(boolean restrictStratToReach)
+	{
+		this.restrictStratToReach = restrictStratToReach;
 	}
 
 	/**
@@ -461,6 +473,14 @@ public class StateModelChecker extends PrismComponent
 	}
 
 	/**
+	 * Whether or not any generated strategies should be restricted to the states reachable under them.
+	 */
+	public boolean getRestrictStratToReach()
+	{
+		return restrictStratToReach;
+	}
+
+	/**
 	 * Whether or not to do bisimulation minimisation before model checking.
 	 */
 	public boolean getDoBisim()
@@ -542,14 +562,14 @@ public class StateModelChecker extends PrismComponent
 	 * Set the attached model file (for e.g. reward structures when model checking)
 	 * and the attached properties file (for e.g. constants/labels when model checking)
 	 */
-	public void setModulesFileAndPropertiesFile(ModelInfo modelInfo, PropertiesFile propertiesFile, ModelGenerator modelGen)
+	public void setModelCheckingInfo(ModelInfo modelInfo, PropertiesFile propertiesFile, RewardGenerator rewardGen)
 	{
 		this.modelInfo = modelInfo;
 		if (modelInfo instanceof ModulesFile) {
 			this.modulesFile = (ModulesFile) modelInfo;
 		}
 		this.propertiesFile = propertiesFile;
-		this.modelGen = modelGen;
+		this.rewardGen = rewardGen;
 		// Get combined constant values from model/properties
 		constantValues = new Values();
 		if (modelInfo != null)
@@ -569,8 +589,8 @@ public class StateModelChecker extends PrismComponent
 	/**
 	 * Model check an expression, process and return the result.
 	 * Information about states and model constants should be attached to the model.
-	 * For other required info (labels, reward structures, etc.), use the methods
-	 * {@link #setModulesFile} and {@link #setPropertiesFile}
+	 * For other required info (labels, reward structures, etc.), use the method
+	 * {@link #setModelCheckingInfo(ModelInfo, PropertiesFile, RewardGenerator)}.
 	 * to attach the original model/properties files.
 	 */
 	public Result check(Model model, Expression expr) throws PrismException
@@ -585,14 +605,16 @@ public class StateModelChecker extends PrismComponent
 		// Remove any existing filter info
 		currentFilter = null;
 
+		// If we need to store a copy of the results vector, add a "store" filter to represent this
+		if (storeVector) {
+			ExpressionFilter exprFilter = new ExpressionFilter("store", expr);
+			exprFilter.setInvisible(true);
+			exprFilter.typeCheck();
+			expr = exprFilter;
+		}
 		// Wrap a filter round the property, if needed
 		// (in order to extract the final result of model checking) 
-		ExpressionFilter exprFilter = ExpressionFilter.addDefaultFilterIfNeeded(expr, model.getNumInitialStates() == 1);
-		// And if we need to store a copy of the results vector, make a note of this
-		if (storeVector) {
-			exprFilter.setStoreVector(true);
-		}
-		expr = exprFilter;
+		expr = ExpressionFilter.addDefaultFilterIfNeeded(expr, model.getNumInitialStates() == 1);
 
 		// If required, do bisimulation minimisation
 		if (doBisim) {
@@ -617,12 +639,11 @@ public class StateModelChecker extends PrismComponent
 		resultString = "Result";
 		if (!("Result".equals(expr.getResultName())))
 			resultString += " (" + expr.getResultName().toLowerCase() + ")";
-		resultString += ": " + result.getResultString();
+		resultString += ": " + result.getResultAndAccuracy();
 		mainLog.print("\n" + resultString + "\n");
 
 		// Clean up
 		//vals.clear();
-		result.setVector(vals);
 
 		// Return result
 		return result;
@@ -631,16 +652,15 @@ public class StateModelChecker extends PrismComponent
 	/**
 	 * Model check an expression and return a vector result values over all states.
 	 * Information about states and model constants should be attached to the model.
-	 * For other required info (labels, reward structures, etc.), use the methods
-	 * {@link #setModulesFile} and {@link #setPropertiesFile}
-	 * to attach the original model/properties files.
+	 * For other required info (labels, reward structures, etc.), use the method
+	 * {@link #setModelCheckingInfo(ModelInfo, PropertiesFile, RewardGenerator)}.
 	 * @param statesOfInterest a set of states for which results should be calculated (null = all states).
 	 *        The calculated values for states not of interest are arbitrary and should to be ignored.
 	 */
 	public StateValues checkExpression(Model model, Expression expr, BitSet statesOfInterest) throws PrismException
 	{
 		StateValues res = null;
-
+		
 		// If-then-else
 		if (expr instanceof ExpressionITE) {
 			res = checkExpressionITE(model, (ExpressionITE) expr, statesOfInterest);
@@ -739,7 +759,6 @@ public class StateModelChecker extends PrismComponent
 	{
 		StateValues res1 = null, res2 = null;
 		int op = expr.getOperator();
-
 		// Check operands recursively
 		try {
 			res1 = checkExpression(model, expr.getOperand1(), statesOfInterest);
@@ -749,7 +768,6 @@ public class StateModelChecker extends PrismComponent
 				res1.clear();
 			throw e;
 		}
-
 		// Apply operation
 		res1.applyBinaryOp(op, res2);
 		res2.clear();
@@ -791,6 +809,7 @@ public class StateModelChecker extends PrismComponent
 			return checkExpressionFuncNary(model, expr, statesOfInterest);
 		case ExpressionFunc.FLOOR:
 		case ExpressionFunc.CEIL:
+		case ExpressionFunc.ROUND:
 			return checkExpressionFuncUnary(model, expr, statesOfInterest);
 		case ExpressionFunc.POW:
 		case ExpressionFunc.MOD:
@@ -1033,7 +1052,7 @@ public class StateModelChecker extends PrismComponent
 		boolean filterInit = (filter instanceof ExpressionLabel && ((ExpressionLabel) filter).isInitLabel());
 		boolean filterInitSingle = filterInit & model.getNumInitialStates() == 1;
 		// Print out number of states satisfying filter
-		if (!filterInit) {
+		if (!filterInit && !expr.isInvisible()) {
 			mainLog.println("\nStates satisfying filter " + filter + ": " + bsFilter.cardinality());
 		}
 		// Possibly optimise filter
@@ -1067,6 +1086,7 @@ public class StateModelChecker extends PrismComponent
 		boolean b = false;
 		String resultExpl = null;
 		Object resObj = null;
+		Accuracy resAcc = null; 
 		switch (op) {
 		case PRINT:
 		case PRINTALL:
@@ -1091,6 +1111,14 @@ public class StateModelChecker extends PrismComponent
 			// Set vals to null to stop it being cleared below
 			vals = null;
 			break;
+		case STORE:
+			// Not much to do here - will be handled below when we store in the Result object
+			// Result vector is unchanged; like PRINT/PRINTALL, don't store a single value (in resObj)
+			// Also, don't bother with explanation string
+			resVals = vals;
+			// Set vals to null to stop it being cleared below
+			vals = null;
+			break;
 		case MIN:
 			// Compute min
 			// Store as object/vector
@@ -1100,8 +1128,7 @@ public class StateModelChecker extends PrismComponent
 			resultExpl = "Minimum value over " + filterStatesString;
 			mainLog.println("\n" + resultExpl + ": " + resObj);
 			// Also find states that (are close to) selected value for display to log
-			// TODO: un-hard-code precision once StateValues knows hoe precise it is
-			bsMatch = vals.getBitSetFromCloseValue(resObj, 1e-5, false);
+			bsMatch = vals.getBitSetFromCloseValue(resObj);
 			bsMatch.and(bsFilter);
 			break;
 		case MAX:
@@ -1113,8 +1140,7 @@ public class StateModelChecker extends PrismComponent
 			resultExpl = "Maximum value over " + filterStatesString;
 			mainLog.println("\n" + resultExpl + ": " + resObj);
 			// Also find states that (are close to) selected value for display to log
-			// TODO: un-hard-code precision once StateValues knows hoe precise it is
-			bsMatch = vals.getBitSetFromCloseValue(resObj, 1e-5, false);
+			bsMatch = vals.getBitSetFromCloseValue(resObj);
 			bsMatch.and(bsFilter);
 			break;
 		case ARGMIN:
@@ -1122,8 +1148,7 @@ public class StateModelChecker extends PrismComponent
 			resObj = vals.minOverBitSet(bsFilter);
 			mainLog.print("\nMinimum value over " + filterStatesString + ": " + resObj);
 			// Find states that (are close to) selected value
-			// TODO: un-hard-code precision once StateValues knows hoe precise it is
-			bsMatch = vals.getBitSetFromCloseValue(resObj, 1e-5, false);
+			bsMatch = vals.getBitSetFromCloseValue(resObj);
 			bsMatch.and(bsFilter);
 			// Store states in vector; for ARGMIN, don't store a single value (in resObj)
 			// Also, don't bother with explanation string
@@ -1137,8 +1162,7 @@ public class StateModelChecker extends PrismComponent
 			resObj = vals.maxOverBitSet(bsFilter);
 			mainLog.print("\nMaximum value over " + filterStatesString + ": " + resObj);
 			// Find states that (are close to) selected value
-			// TODO: un-hard-code precision once StateValues knows hoe precise it is
-			bsMatch = vals.getBitSetFromCloseValue(resObj, 1e-5, false);
+			bsMatch = vals.getBitSetFromCloseValue(resObj);
 			bsMatch.and(bsFilter);
 			// Store states in vector; for ARGMAX, don't store a single value (in resObj)
 			// Also, don't bother with explanation string
@@ -1257,6 +1281,7 @@ public class StateModelChecker extends PrismComponent
 			// Find first (only) value
 			// Store as object/vector
 			resObj = vals.firstFromBitSet(bsFilter);
+			resAcc = vals.accuracy;
 			resVals = new StateValues(expr.getType(), resObj, model);
 			// Create explanation of result and print some details to log
 			resultExpl = "Value in ";
@@ -1289,16 +1314,20 @@ public class StateModelChecker extends PrismComponent
 		// Store result
 		result.setResult(resObj);
 		result.setParameterString(parsed_params != null ? parsed_params.getParameterString() : null);
+		result.setAccuracy(resAcc);
 		// Set result explanation (if none or disabled, clear)
 		if (expr.getExplanationEnabled() && resultExpl != null) {
 			result.setExplanation(resultExpl.toLowerCase());
 		} else {
 			result.setExplanation(null);
 		}
-		// Store vector if requested (and if not, clear it)
-		if (storeVector) {
-			result.setVector(vals);
-		} else if (vals != null) {
+		// Store vector if requested
+		if (op == FilterOperator.STORE) {
+			result.setVector(resVals);
+		}
+		// Clear old vector if present
+		// (and if the vector was not stored previously)
+		if (vals != null && !(Expression.isFilter(expr.getOperand(), FilterOperator.STORE))) {
 			vals.clear();
 		}
 

@@ -32,7 +32,6 @@ import java.util.Map.Entry;
 import explicit.rewards.MCRewards;
 import parser.State;
 import parser.Values;
-import prism.ModelType;
 import prism.PrismException;
 import prism.PrismNotSupportedException;
 import strat.MDStrategy;
@@ -66,11 +65,6 @@ public class DTMCFromMDPAndMDStrategy extends DTMCExplicit
 	}
 
 	// Accessors (for Model)
-
-	public ModelType getModelType()
-	{
-		return ModelType.DTMC;
-	}
 
 	public int getNumStates()
 	{
@@ -112,18 +106,18 @@ public class DTMCFromMDPAndMDStrategy extends DTMCExplicit
 		return mdp.getConstantValues();
 	}
 
-	public int getNumTransitions()
+	public int getNumTransitions(int s)
 	{
-		int numTransitions = 0;
-		for (int s = 0; s < numStates; s++)
-			if (strat.isChoiceDefined(s))
-				numTransitions += mdp.getNumTransitions(s, strat.getChoiceIndex(s));
-		return numTransitions;
+		return strat.isChoiceDefined(s) ? mdp.getNumTransitions(s, strat.getChoiceIndex(s)) : 0;
 	}
 
 	public SuccessorsIterator getSuccessors(final int s)
 	{
-		return mdp.getSuccessors(s, strat.getChoiceIndex(s));
+		if (strat.isChoiceDefined(s)) {
+			return mdp.getSuccessors(s, strat.getChoiceIndex(s));
+		} else {
+			return SuccessorsIterator.empty();
+		}
 	}
 
 	public int getNumChoices(int s)
@@ -147,24 +141,7 @@ public class DTMCFromMDPAndMDStrategy extends DTMCExplicit
 		// No deadlocks by definition
 	}
 
-	@Override
-	public String infoString()
-	{
-		return mdp.infoString() + " + " + "???"; // TODO
-	}
-
-	@Override
-	public String infoStringTable()
-	{
-		return mdp.infoString() + " + " + "???\n"; // TODO
-	}
-
 	// Accessors (for DTMC)
-
-	public int getNumTransitions(int s)
-	{
-		return strat.isChoiceDefined(s) ? mdp.getNumTransitions(s, strat.getChoiceIndex(s)) : 0;
-	}
 
 	public Iterator<Entry<Integer, Double>> getTransitionsIterator(int s)
 	{

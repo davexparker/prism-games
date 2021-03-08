@@ -26,23 +26,24 @@
 
 package param;
 
-import java.io.File;
 import java.util.BitSet;
 import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
-import parser.Values;
-import prism.ModelType;
-import prism.PrismException;
-import prism.PrismLog;
-import strat.MDStrategy;
 import explicit.MDPGeneric;
 import explicit.Model;
 import explicit.ModelExplicit;
 import explicit.SuccessorsIterator;
 import explicit.graphviz.Decorator;
+import parser.Values;
+import prism.ModelType;
+import prism.PrismException;
+import prism.PrismLog;
+import strat.MDStrategy;
 
 /**
  * Represents a parametric Markov model.
@@ -259,27 +260,46 @@ public final class ParamModel extends ModelExplicit implements MDPGeneric<Functi
 	}
 
 	@Override
-	public void exportToPrismExplicit(String baseFilename) throws PrismException
+	public void exportToPrismExplicitTra(PrismLog out)
 	{
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	public void exportToPrismExplicitTra(String filename) throws PrismException
-	{
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	public void exportToPrismExplicitTra(File file) throws PrismException
-	{
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	public void exportToPrismExplicitTra(PrismLog log)
-	{
-		throw new UnsupportedOperationException();
+		int i, j, numChoices;
+		Object action;
+		TreeMap<Integer, Function> sorted;
+		// Output transitions to .tra file
+		if (modelType.nondeterministic()) {
+			out.print(numStates + " " + getNumChoices() + " " + getNumTransitions() + "\n");
+		} else {
+			out.print(numStates + " " + getNumTransitions() + "\n");
+		}
+		sorted = new TreeMap<Integer, Function>();
+		for (i = 0; i < numStates; i++) {
+			numChoices = getNumChoices(i);
+			for (j = 0; j < numChoices; j++) {
+				// Extract transitions and sort by destination state index (to match PRISM-exported files)
+				Iterator<Map.Entry<Integer, Function>> iter = getTransitionsIterator(i, j);
+				while (iter.hasNext()) {
+					Map.Entry<Integer, Function> e = iter.next();
+					sorted.put(e.getKey(), e.getValue());
+				}
+				// Print out (sorted) transitions
+				for (Map.Entry<Integer, Function> e : sorted.entrySet()) {
+					Object value;
+					if (e.getValue().isConstant()) {
+						value = e.getValue().asBigRational();
+					} else {
+						value = e.getValue();
+					}
+					if (modelType.nondeterministic()) {
+						out.print(i + " " + j + " " + e.getKey() + " " + value);
+					} else {
+						out.print(i + " " + e.getKey() + " " + value);
+					}
+					action = getAction(i, j);
+					out.print(action == null ? "\n" : (" " + action + "\n"));
+				}
+				sorted.clear();
+			}
+		}
 	}
 
 	@Override
@@ -407,13 +427,6 @@ public final class ParamModel extends ModelExplicit implements MDPGeneric<Functi
 	public Object getAction(int s, int i)
 	{
 		return null;
-	}
-
-	@Override
-	public boolean areAllChoiceActionsUnique()
-	{
-		// we don't know
-		return false;
 	}
 
 	/**

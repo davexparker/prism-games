@@ -53,6 +53,7 @@ import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JProgressBar;
 import javax.swing.JTabbedPane;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
@@ -68,6 +69,7 @@ import prism.Prism;
 import prism.PrismException;
 import prism.PrismFileLog;
 import prism.PrismLog;
+import prism.PrismNative;
 import userinterface.util.GUIComputationEvent;
 import userinterface.util.GUIEvent;
 import userinterface.util.GUIEventHandler;
@@ -113,12 +115,12 @@ public class GUIPrism extends JFrame
 	{
 		try {
 			//Show the splash screen
-			//splash = new GUIPrismSplash("images/splash.png");
-			//splash.display();
-			gui = new GUIPrism();
+			splash = new GUIPrismSplash("images/splash.png");
+			splash.display();
+			gui = new GUIPrism(args);
 			gui.setVisible(true);
-			//EventQueue.invokeLater(new GUIPrism.SplashScreenCloser());
-			gui.passCLArgs(args);
+			EventQueue.invokeLater(new GUIPrism.SplashScreenCloser());
+			gui.passCLArgs();
 		} catch (GUIException e) {
 			System.err.println("Error: Could not load the PRISM GUI: " + e.getMessage());
 			System.exit(1);
@@ -144,7 +146,6 @@ public class GUIPrism extends JFrame
 		userinterface.properties.GUIMultiProperties props;
 		userinterface.simulator.GUISimulator sim;
 		userinterface.log.GUILog log;
-		userinterface.GUINetwork nw;
 		// Create
 		fileMenu = new userinterface.GUIFileMenu(g);
 		clipboardPlugin = new GUIClipboard(g);
@@ -152,7 +153,6 @@ public class GUIPrism extends JFrame
 		sim = new userinterface.simulator.GUISimulator(g);
 		props = new userinterface.properties.GUIMultiProperties(g, sim);
 		log = new userinterface.log.GUILog(g);
-		nw = new userinterface.GUINetwork(g);
 		// Add to list
 		ArrayList<GUIPlugin> plugs = new ArrayList<GUIPlugin>();
 		plugs.add(fileMenu);
@@ -161,7 +161,6 @@ public class GUIPrism extends JFrame
 		plugs.add(props);
 		plugs.add(sim);
 		plugs.add(log);
-		plugs.add(nw);
 		// Make some plugins aware of others
 		sim.setGUIMultiModel(model);
 		model.setGUISimulator(sim);
@@ -178,15 +177,20 @@ public class GUIPrism extends JFrame
 	//properties
 	private Prism prism;
 	private PrismLog theLog;
+	
+	// command-line args to be passed on to components
+	private String args[];
+	// initial directory for file chooser (optional)
+	private String chooserDir;
 
 	//gui components
-	private ArrayList plugs;
+	private ArrayList<GUIPlugin> plugs;
 	private JTabbedPane theTabs;
 	private GUIPlugin logPlug;
 	private GUIEventHandler eventHandle;
 	private GUIOptionsDialog options;
 	private JFileChooser choose;
-	private GUIProgressBar progress;
+	private JProgressBar progress;
 	private GUITaskBar taskbar;
 	private String taskbarText = "";
 	private Action prismOptions;
@@ -201,7 +205,17 @@ public class GUIPrism extends JFrame
 	 */
 	public GUIPrism() throws GUIException, PrismException
 	{
+		this(new String[0]);
+	}
+
+	/** Creates a new instance of GUIPrism.  By calling setupResources(), setupPrism()
+	 * and then initComponents().
+	 * @throws GUIException Thrown if there is an error in initialising the user interface.
+	 */
+	public GUIPrism(String args[]) throws GUIException, PrismException
+	{
 		super();
+		this.args = processCLArgs(args);
 		setupResources();
 		setupPrism();
 		initComponents();
@@ -226,8 +240,8 @@ public class GUIPrism extends JFrame
 		}
 
 		// Create new file chooser which starts in current directory
-		choose = new JFileChooser();
-		File currentDir = new File(".");
+		// (or in the directory specified with command-line arg -dir)
+		File currentDir = new File(chooserDir == null ? "." : chooserDir);
 		// If current directory is the bin directory, go up one level (mainly for Windows version)
 		try {
 			currentDir = currentDir.getCanonicalFile();
@@ -236,7 +250,8 @@ public class GUIPrism extends JFrame
 		} catch (IOException e) {
 			currentDir = new File(".");
 		}
-		choose.setCurrentDirectory(currentDir);
+		// create the chooser
+		choose = new JFileChooser(currentDir);
 
 		logPlug = null;
 		eventHandle = new GUIEventHandler(this);
@@ -283,8 +298,7 @@ public class GUIPrism extends JFrame
 		});
 		//Setup pluggable screens in here
 		plugs = getPluginArray(this);
-		for (int i = 0; i < plugs.size(); i++) {
-			GUIPlugin plug = (GUIPlugin) plugs.get(i);
+		for (GUIPlugin plug : plugs) {
 			if (plug.displaysTab()) {
 				theTabs.addTab(plug.getTabText(), plug);
 				theTabs.setEnabledAt(theTabs.getComponentCount() - 1, plug.isEnabled());
@@ -294,9 +308,6 @@ public class GUIPrism extends JFrame
 			}
 			if (plug.getToolBar() != null) {
 				toolPanel.add(plug.getToolBar());
-			}
-			if (plug.getOptions() != null) {
-				options.addPanel(plug.getOptions());
 			}
 			if (plug instanceof userinterface.log.GUILog) {
 				logPlug = (userinterface.log.GUILog) plug;
@@ -371,7 +382,8 @@ public class GUIPrism extends JFrame
 
 		JPanel bottomPanel = new JPanel();
 		{
-		        progress = new GUIProgressBar(0, 100, this);
+			progress = new JProgressBar(0, 100);
+			progress.setBorder(null);
 			taskbar = new GUITaskBar();
 			taskbar.setText("Welcome to PRISM...");
 			bottomPanel.setBorder(new javax.swing.border.EtchedBorder());
@@ -396,23 +408,57 @@ public class GUIPrism extends JFrame
 		setIconImage(GUIPrism.getIconFromImage("smallPrism.png").getImage());
 		getContentPane().setSize(new java.awt.Dimension(800, 600));
 		pack();
+
+		for (GUIPlugin plug : plugs) {
+			plug.onInitComponentsCompleted();
+		}
 	}
 
-	public void passCLArgs(String args[])
+	public String[] processCLArgs(String args[])
 	{
-		// just before we get started, pass any command-line args to all plugins
-		// we first remove the -javamaxmem argument, if present
+		// before (later) passing any command-line args to all plugins
+		// we first remove any -javamaxmem/-javastack arguments (ignored)
+		// and any -dir argument (processed here first)
 		List<String> argsCopy = new ArrayList<String>();
 		for (int i = 0; i < args.length; i++) {
-			if (args[i].equals("-javamaxmem")) {
-				i++;
+			if (args[i].charAt(0) == '-') {
+				String sw = args[i].substring(1);
+				// remove optional second "-" (i.e. we allow switches of the form --sw too)
+				if (sw.charAt(0) == '-')
+					sw = sw.substring(1);
+				if (sw.equals("javamaxmem") || sw.equals("javastack")) {
+					// ignore argument and subsequent value
+					i++;
+				} else if (sw.equals("dir")) {
+					if (i < args.length - 1) {
+						String workingDir = args[++i];
+						// set working dir natively for PRISM stuff
+						if (PrismNative.setWorkingDirectory(workingDir) != 0) {
+							System.err.println("Error: Could not change working directory to " + workingDir);
+							System.exit(1);
+						}
+						// also store locally to initialise file chooser
+						chooserDir = workingDir;
+						// NB: we avoid setting system property "user.dir"
+						// since this may break loading of shared libraries etc.
+					} else {
+						System.err.println("Error: No value specified for -" + sw + " switch");
+						System.exit(1);
+					}
+				} else {
+					argsCopy.add(args[i]);
+				}
 			} else {
 				argsCopy.add(args[i]);
 			}
 		}
-		for (int i = 0; i < plugs.size(); i++) {
-			GUIPlugin plug = (GUIPlugin) plugs.get(i);
-			plug.takeCLArgs(argsCopy.toArray(new String[0]));
+		return argsCopy.toArray(new String[0]);
+	}
+	
+	public void passCLArgs()
+	{
+		for (GUIPlugin plug : plugs) {
+			plug.takeCLArgs(args);
 		}
 	}
 
@@ -652,13 +698,13 @@ public class GUIPrism extends JFrame
 		}
 	}
 
-	/** Utility update method to set the GUIProgressBar to an indeterminate state. */
+	/** Utility update method to set the JProgressBar to an indeterminate state. */
 	public void startProgress()
 	{
 		progress.setIndeterminate(true);
 	}
 
-	/** Utility update method to set the state of the GUIProgressBar to stopped. */
+	/** Utility update method to set the state of the JProgressBar to stopped. */
 	public void stopProgress()
 	{
 		progress.setIndeterminate(false);

@@ -175,7 +175,7 @@ public abstract class Expression extends ASTElement
 	 */
 	public Object evaluate() throws PrismLangException
 	{
-		return evaluate(new EvaluateContextValues(null, null));
+		return evaluate(new EvaluateContextConstants(null));
 	}
 
 	/**
@@ -185,7 +185,7 @@ public abstract class Expression extends ASTElement
 	 */
 	public Object evaluate(Values constantValues) throws PrismLangException
 	{
-		return evaluate(new EvaluateContextValues(constantValues, null));
+		return evaluate(new EvaluateContextConstants(constantValues));
 	}
 
 	/**
@@ -220,6 +220,17 @@ public abstract class Expression extends ASTElement
 	}
 
 	/**
+	 * Evaluate this expression, based on values for variables (but not constants),
+	 * using both current/next (unprimed/primed) values for variables.
+	 * Variable values are supplied as State objects, i.e. arrays of variable values.
+	 * Note: assumes that constants have been evaluated and type checking has been done.
+	 */
+	public Object evaluate(State state, State nextState) throws PrismLangException
+	{
+		return evaluate(new EvaluateContextStateAndNextState(state, nextState));
+	}
+
+	/**
 	 * Evaluate this expression, based on values for some variables (but not constants).
 	 * Variable values are supplied as a State object, indexed over a subset of all variables,
 	 * and a mapping from indices (over all variables) to this subset (-1 if not in subset).
@@ -250,14 +261,7 @@ public abstract class Expression extends ASTElement
 	 */
 	public int evaluateInt(EvaluateContext ec) throws PrismLangException
 	{
-		Object o = evaluate(ec);
-		if (o instanceof Integer) {
-			return ((Integer) o).intValue();
-		}
-		if (o instanceof Boolean) {
-			return ((Boolean) o).booleanValue() ? 1 : 0;
-		}
-		throw new PrismLangException("Cannot evaluate to an integer", this);
+		return evaluateObjectAsInt(evaluate(ec));
 	}
 
 	/**
@@ -267,7 +271,7 @@ public abstract class Expression extends ASTElement
 	 */
 	public int evaluateInt() throws PrismLangException
 	{
-		return evaluateInt(new EvaluateContextValues(null, null));
+		return evaluateInt(new EvaluateContextConstants(null));
 	}
 
 	/**
@@ -278,7 +282,7 @@ public abstract class Expression extends ASTElement
 	 */
 	public int evaluateInt(Values constantValues) throws PrismLangException
 	{
-		return evaluateInt(new EvaluateContextValues(constantValues, null));
+		return evaluateInt(new EvaluateContextConstants(constantValues));
 	}
 
 	/**
@@ -343,6 +347,21 @@ public abstract class Expression extends ASTElement
 	}
 
 	/**
+	 * Evaluate this object as an integer.
+	 * Any typing issues cause an exception (but: we do allow conversion of boolean to 0/1).
+	 */
+	public static int evaluateObjectAsInt(Object o) throws PrismLangException
+	{
+		if (o instanceof Integer) {
+			return ((Integer) o).intValue();
+		}
+		if (o instanceof Boolean) {
+			return ((Boolean) o).booleanValue() ? 1 : 0;
+		}
+		throw new PrismLangException("Cannot evaluate " + o + " to an integer");
+	}
+
+	/**
 	 * Evaluate this expression as a double.
 	 * Any typing issues cause an exception (but: we do allow conversion of boolean to 0.0/1.0).
 	 */
@@ -354,6 +373,9 @@ public abstract class Expression extends ASTElement
 		}
 		if (o instanceof Double) {
 			return ((Double) o).doubleValue();
+		}
+		if (o instanceof BigRational) {
+			return ((BigRational)o).doubleValue();
 		}
 		if (o instanceof Boolean) {
 			return ((Boolean) o).booleanValue() ? 1.0 : 0.0;
@@ -368,7 +390,7 @@ public abstract class Expression extends ASTElement
 	 */
 	public double evaluateDouble() throws PrismLangException
 	{
-		return evaluateDouble(new EvaluateContextValues(null, null));
+		return evaluateDouble(new EvaluateContextConstants(null));
 	}
 
 	/**
@@ -379,7 +401,7 @@ public abstract class Expression extends ASTElement
 	 */
 	public double evaluateDouble(Values constantValues) throws PrismLangException
 	{
-		return evaluateDouble(new EvaluateContextValues(constantValues, null));
+		return evaluateDouble(new EvaluateContextConstants(constantValues));
 	}
 
 	/**
@@ -463,7 +485,7 @@ public abstract class Expression extends ASTElement
 	 */
 	public boolean evaluateBoolean() throws PrismLangException
 	{
-		return evaluateBoolean(new EvaluateContextValues(null, null));
+		return evaluateBoolean(new EvaluateContextConstants(null));
 	}
 
 	/**
@@ -474,7 +496,7 @@ public abstract class Expression extends ASTElement
 	 */
 	public boolean evaluateBoolean(Values constantValues) throws PrismLangException
 	{
-		return evaluateBoolean(new EvaluateContextValues(constantValues, null));
+		return evaluateBoolean(new EvaluateContextConstants(constantValues));
 	}
 
 	/**
@@ -546,7 +568,7 @@ public abstract class Expression extends ASTElement
 	 */
 	public BigRational evaluateExact() throws PrismLangException
 	{
-		return evaluateExact(new EvaluateContextValues(null, null));
+		return evaluateExact(new EvaluateContextConstants(null));
 	}
 
 	/**
@@ -557,7 +579,7 @@ public abstract class Expression extends ASTElement
 	 */
 	public BigRational evaluateExact(Values constantValues) throws PrismLangException
 	{
-		return evaluateExact(new EvaluateContextValues(constantValues, null));
+		return evaluateExact(new EvaluateContextConstants(constantValues));
 	}
 
 	/**
@@ -777,6 +799,11 @@ public abstract class Expression extends ASTElement
 				&& ExpressionBinaryOp.isRelOp(((ExpressionBinaryOp) expr).getOperator());
 	}
 
+	public static boolean isFilter(Expression expr, ExpressionFilter.FilterOperator opType)
+	{
+		return expr instanceof ExpressionFilter && ((ExpressionFilter) expr).getOperatorType() == opType;
+	}
+	
 	/**
 	 * Test if an expression is a function of type {@code nameCode}.
 	 */
@@ -859,6 +886,31 @@ public abstract class Expression extends ASTElement
 					}
 				}
 			});
+		} catch (PrismLangException e) {
+			return true;
+		}
+		return false;
+	}
+	
+	/**
+	 * Test if an expression contains a minimum expected reward operator. 
+	 * Actually, this returns true if there is an R operator with "min=?" or a lower bound attached to it,
+	 * so this is just an approximation. (For example, an R operator might be embedded within
+	 * an "exists" strategy operator)
+	 */
+	public static boolean containsMinReward(Expression expr)
+	{
+		try {
+			ASTTraverse astt = new ASTTraverse()
+			{
+				public void visitPost(ExpressionReward e) throws PrismLangException
+				{
+					if (e.isMin()) {
+						throw new PrismLangException("Found one", e);
+					}
+				}
+			};
+			expr.accept(astt);
 		} catch (PrismLangException e) {
 			return true;
 		}

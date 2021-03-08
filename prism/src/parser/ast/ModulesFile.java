@@ -31,24 +31,30 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Vector;
 
+import param.BigRational;
+import parser.IdentUsage;
 import parser.State;
 import parser.Values;
 import parser.VarList;
 import parser.type.Type;
+import parser.visitor.ASTTraverse;
 import parser.visitor.ASTVisitor;
 import parser.visitor.ModulesFileSemanticCheck;
 import parser.visitor.ModulesFileSemanticCheckAfterConstants;
+import prism.ModelInfo;
 import prism.ModelType;
 import prism.PrismException;
-import prism.ModelInfo;
 import prism.PrismLangException;
 import prism.PrismUtils;
+import prism.RewardGenerator;
 
 // Class representing parsed model file
 
-public class ModulesFile extends ASTElement implements ModelInfo
+public class ModulesFile extends ASTElement implements ModelInfo, RewardGenerator
 {
-	// Model type (enum)
+	// Model type, as specified in the model file
+	private ModelType modelTypeInFile;
+	// Model type (actual, may differ)
 	private ModelType modelType;
 
 	// Model components
@@ -62,26 +68,30 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	private ArrayList<RewardStruct> rewardStructs; // Rewards structures
 	private List<String> rewardStructNames; // Names of reward structures
 	private Expression initStates; // Initial states specification
+	private boolean hasObservables; // Observables info
+	private List<String> obsVars;
 	private List<Player> players; // Player definitions
+	private List<String> playerNames; // Player names
 
-	// Lists of all identifiers used
-	private Vector<String> formulaIdents;
-	private Vector<String> constantIdents;
-	private Vector<String> varIdents; // TODO: don't need?
+	// Info about all identifiers used
+	private IdentUsage identUsage;
+	private IdentUsage quotedIdentUsage;
 	// List of all module names
 	private String[] moduleNames;
-	// List of synchronising actions
+	// List of synchronising actions (also stored as Object list for ModelInfo)
 	private Vector<String> synchs;
-	// Lists of variable info (declaration, name, type)
+	private List<Object> actions;
+	// Lists of variable info (declaration, name, type, module index)
 	private Vector<Declaration> varDecls;
 	private Vector<String> varNames;
 	private Vector<Type> varTypes;
+	private Vector<Integer> varModules;
 
 	// Values set for undefined constants (null if none)
 	private Values undefinedConstantValues;
 	// Actual values of (some or all) constants
 	private Values constantValues;
-
+	
 	// Constructor
 
 	public ModulesFile()
@@ -89,7 +99,7 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		formulaList = new FormulaList();
 		labelList = new LabelList();
 		constantList = new ConstantList();
-		modelType = ModelType.MDP; // default type
+		modelTypeInFile = modelType = null; // Unspecified
 		globals = new Vector<Declaration>();
 		modules = new Vector<Object>();
 		systemDefns = new ArrayList<SystemDefn>();
@@ -97,13 +107,16 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		rewardStructs = new ArrayList<RewardStruct>();
 		rewardStructNames = new ArrayList<String>();
 		initStates = null;
+		hasObservables = false;
+		obsVars = new ArrayList<String>();
 		players = new ArrayList<Player>();
-		formulaIdents = new Vector<String>();
-		constantIdents = new Vector<String>();
-		varIdents = new Vector<String>();
+		playerNames = new ArrayList<String>();
+		identUsage = new IdentUsage();
+		quotedIdentUsage = new IdentUsage(true);
 		varDecls = new Vector<Declaration>();
 		varNames = new Vector<String>();
 		varTypes = new Vector<Type>();
+		varModules = new Vector<Integer>();
 		undefinedConstantValues = null;
 		constantValues = null;
 	}
@@ -125,6 +138,22 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		constantList = cl;
 	}
 
+	/**
+	 * Set the model type that is specified in the model file.
+	 * Can be null, denoting that it is unspecified.
+	 */
+	public void setModelTypeInFile(ModelType t)
+	{
+		modelTypeInFile = t;
+		// As a default, set the actual type to be the same
+		modelType = modelTypeInFile;
+	}
+
+	/**
+	 * Set the actual model type,
+	 * which may differ from the type specified in the model file.
+	 * Note: if {@link #tidyUp()} is called, this may be overwritten.
+	 */
 	public void setModelType(ModelType t)
 	{
 		modelType = t;
@@ -238,17 +267,29 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		initStates = e;
 	}
 
+	public void setHasObservables(boolean hasObservables)
+	{
+		this.hasObservables = hasObservables;
+	}
+	
+	public void addObservableVar(String n)
+	{
+		obsVars.add(n);
+	}
+	
 	/**
 	 * Add a "player" definition.
 	 */
 	public void addPlayer(Player p)
 	{
 		players.add(p);
+		playerNames.add(p.getName());
 	}
 
 	public void addPlayer(int index, Player p)
 	{
 		players.add(index, p);
+		playerNames.add(index, p.getName());
 	}
 
 	/**
@@ -257,6 +298,7 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	public void setPlayer(int i, Player p)
 	{
 		players.set(i, p);
+		playerNames.set(i, p.getName());
 	}
 
 	// Get methods
@@ -300,6 +342,11 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		return constantList;
 	}
 
+	public ModelType getModelTypeInFile()
+	{
+		return modelTypeInFile;
+	}
+	
 	@Override
 	public ModelType getModelType()
 	{
@@ -429,7 +476,7 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	{
 		int n = systemDefns.size();
 		for (int i = 0; i < n; i++) {
-			String s = systemDefnNames.get(i);
+			String s = systemDefnNames.get(i); 
 			if ((s == null && name == null) || (s != null && s.equals(name)))
 				return i;
 		}
@@ -464,6 +511,42 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	}
 	
 	/**
+	 * Get the index of a module by its name
+	 * (indexed from 0, not from 1 like at the user (property language) level).
+	 * Returns -1 if name does not exist.
+	 */
+	public int getRewardStructIndex(String name)
+	{
+		int i, n;
+		n = rewardStructs.size();
+		for (i = 0; i < n; i++) {
+			if ((rewardStructs.get(i)).getName().equals(name))
+				return i;
+		}
+		return -1;
+	}
+
+	/**
+	 * Returns true if the {@code r}th reward structure defines state rewards.
+	 * ({@code r} is indexed from 0, not from 1 like at the user (property language) level).
+	 */
+	public boolean rewardStructHasStateRewards(int r)
+	{
+		RewardStruct rewStr = getRewardStruct(r);
+		return rewStr.getNumStateItems() > 0;
+	}
+
+	/**
+	 * Returns true if the {@code r}th reward structure defines transition rewards.
+	 * ({@code r} is indexed from 0, not from 1 like at the user (property language) level).
+	 */
+	public boolean rewardStructHasTransitionRewards(int r)
+	{
+		RewardStruct rewStr = getRewardStruct(r);
+		return rewStr.getNumTransItems() > 0;
+	}
+
+	/**
 	 * Get a reward structure by its index
 	 * (indexed from 0, not from 1 like at the user (property language) level).
 	 * Returns null if index is out of range.
@@ -479,22 +562,6 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	public List<RewardStruct> getRewardStructs()
 	{
 		return rewardStructs;
-	}
-
-	/**
-	 * Get the index of a module by its name
-	 * (indexed from 0, not from 1 like at the user (property language) level).
-	 * Returns -1 if name does not exist.
-	 */
-	public int getRewardStructIndex(String name)
-	{
-		int i, n;
-		n = rewardStructs.size();
-		for (i = 0; i < n; i++) {
-			if ((rewardStructs.get(i)).getName().equals(name))
-				return i;
-		}
-		return -1;
 	}
 
 	/**
@@ -515,6 +582,12 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		return getRewardStruct(0);
 	}
 
+	@Override
+	public boolean isRewardLookupSupported(RewardLookup lookup)
+	{
+		return lookup == RewardLookup.BY_REWARD_STRUCT;
+	}
+	
 	/**
 	 * Get the expression used in init...endinit to define the initial states of the model.
 	 * This is null if absent, i.e. the model has a single initial state defined by the
@@ -527,19 +600,32 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	}
 
 	/**
-	 * Get the number of "player" definitions in the model.
+	 * Does this model have an observables...endobservables block?
+	 * (i.e., is it a partially observable model?)
 	 */
-	public int getNumPlayers()
+	public boolean hasObservables()
 	{
-		return players.size();
+		return hasObservables;
 	}
-
+	
+	@Override
+	public List<String> getObservableVars()
+	{
+		return obsVars;
+	}
+	
 	/**
 	 * Get the {@code i}th "player" definition.
 	 */
 	public Player getPlayer(int i)
 	{
 		return players.get(i);
+	}
+
+	@Override
+	public List<String> getPlayerNames()
+	{
+		return playerNames;
 	}
 
 	/**
@@ -580,7 +666,7 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		}
 		return -1;
 	}
-
+		
 	/**
 	 * Get the (index of the) player that owns module/action {@code a},
 	 * which is either of the form "[act]" or " module" for an action or module, respectively.
@@ -600,14 +686,61 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	{
 		return null;
 	}
-
+	
 	/**
-	 * Check if an identifier is used by this model
-	 * (as a formula, constant, or variable)
+	 * Check if an identifier is already used somewhere in the model
+	 * (as a formula, constant or variable)
+	 * and throw an exception if it is. Otherwise, add it to the list.
+	 * @param ident The name of the (new) identifier
+	 * @param decl Where the identifier is declared in the model
+	 * @param use Optionally, the identifier's usage (e.g. "constant")
 	 */
+	private void checkAndAddIdentifier(String ident, ASTElement decl, String use) throws PrismLangException
+	{
+		identUsage.checkAndAddIdentifier(ident, decl, use, "the model");
+	}
+	
+	@Override
 	public boolean isIdentUsed(String ident)
 	{
-		return formulaIdents.contains(ident) || constantIdents.contains(ident) || varIdents.contains(ident);
+		// Goes beyond default implementation in ModelInfo:
+		// also looks at formulas
+		return identUsage.isIdentUsed(ident);
+	}
+
+	@Override
+	public void checkIdent(String ident, ASTElement decl, String use) throws PrismLangException
+	{
+		// Goes beyond default implementation in ModelInfo:
+		// also looks at formulas, and produces better error messages
+		identUsage.checkIdent(ident, decl, use);
+	}
+
+	/**
+	 * Check if a quoted identifier is already used somewhere in the model
+	 * (as a label)
+	 * and throw an exception if it is. Otherwise, add it to the list.
+	 * @param ident The name of the (new) identifier, without quotes
+	 * @param decl Where the identifier is declared in the model
+	 * @param use Optionally, the identifier's usage (e.g. "label")
+	 */
+	private void checkAndAddQuotedIdentifier(String ident, ASTElement decl, String use) throws PrismLangException
+	{
+		quotedIdentUsage.checkAndAddIdentifier(ident, decl, use, "the model");
+	}
+	
+	@Override
+	public boolean isQuotedIdentUsed(String ident)
+	{
+		return quotedIdentUsage.isIdentUsed(ident);
+	}
+
+	@Override
+	public void checkQuotedIdent(String ident, ASTElement decl, String use) throws PrismLangException
+	{
+		// Goes beyond default implementation in ModelInfo:
+		// produces better error messages
+		quotedIdentUsage.checkIdent(ident, decl, use);
 	}
 
 	// get individual module name
@@ -699,6 +832,18 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		return varTypes;
 	}
 
+	@Override
+	public DeclarationType getVarDeclarationType(int i)
+	{
+		return varDecls.get(i).getDeclType();
+	}
+
+	@Override
+	public int getVarModuleIndex(int i)
+	{
+		return varModules.get(i);
+	}
+
 	public boolean isGlobalVariable(String s)
 	{
 		int i, n;
@@ -711,6 +856,16 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		return false;
 	}
 
+	public boolean isVarObservable(int i)
+	{
+		return obsVars.contains(varNames.get(i));
+	}
+	
+	public boolean isVarObservable(String s)
+	{
+		return obsVars.contains(s);
+	}
+	
 	@Override
 	public boolean containsUnboundedVariables()
 	{
@@ -724,21 +879,32 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		return false;
 	}
 	
+	public boolean containsClockVariables()
+	{
+		int n = getNumVars();
+		for (int i = 0; i < n; i++) {
+			if (getVarDeclaration(i).getDeclType() instanceof DeclarationClock) {
+				return true;
+			}
+		}
+		return false;
+	}
+	
 	/**
 	 * Method to "tidy up" after parsing (must be called)
 	 * (do some checks and extract some information)
 	 */
 	public void tidyUp() throws PrismLangException
 	{
-		// Clear lists that will generated by this method 
+		// Clear data that will be generated by this method 
 		// (in case it has already been called previously).
-		formulaIdents.clear();
-		constantIdents.clear();
-		varIdents.clear();
+		identUsage.clear();
+		quotedIdentUsage.clear();
 		varDecls.clear();
 		varNames.clear();
 		varTypes.clear();
-
+		varModules.clear();
+		
 		// Expansion of formulas and renaming
 
 		// Check formula identifiers
@@ -753,13 +919,6 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		expandFormulas(formulaList);
 		// Perform module renaming
 		sortRenamings();
-
-		// sort modules - depends on module renaming
-		try {
-			sortModules();
-		} catch (PrismException e) {
-			throw new PrismLangException(e.getMessage());
-		}
 
 		// Check label identifiers
 		checkLabelIdents();
@@ -783,50 +942,52 @@ public class ModulesFile extends ASTElement implements ModelInfo
 
 		// Find all instances of property refs
 		findAllPropRefs(this, null);
-
+		
 		// Check reward structure names
 		checkRewardStructNames();
 
 		// Check "system...endsystem" constructs
 		checkSystemDefns();
-
+		
 		// Get synchronising action names
 		// (NB: Do this *after* checking for cycles in system defns above)
 		getSynchNames();
 		// Then identify/check any references to action names
 		findAllActions(synchs);
 
+		// Determine actual model type
+		// (checks/processing below this point can assume that modelType
+		//  is non-null; methods before this point cannot)
+		finaliseModelType();
+		
+		// Check observables
+		checkObservables();
 		// Check player info
 		checkPlayerDefns();
-
 		// Various semantic checks 
 		doSemanticChecks();
 		// Type checking
 		typeCheck();
-
+		
 		// If there are no undefined constants, set up values for constants
 		// (to avoid need for a later call to setUndefinedConstants).
-		// If there are undefined constants, the semanticCheckAfterConstants will fail,
-		// but report the appropriate exception.
-		if (getUndefinedConstants().isEmpty())
-			setUndefinedConstants(null);
+		// NB: Can't call setUndefinedConstants if there are undefined constants
+		// because semanticCheckAfterConstants may fail. 
+		if (getUndefinedConstants().isEmpty()) {
+			// we use non-exact constant evaluation by default,
+			// for exact mode constants will be reevaluated later on
+			setUndefinedConstants(null, false);
+		}
 	}
 
 	// Check formula identifiers
 
 	private void checkFormulaIdents() throws PrismLangException
 	{
-		int i, n;
-		String s;
-
-		n = formulaList.size();
-		for (i = 0; i < n; i++) {
-			s = formulaList.getFormulaName(i);
-			if (isIdentUsed(s)) {
-				throw new PrismLangException("Duplicated identifier \"" + s + "\"", formulaList.getFormulaNameIdent(i));
-			} else {
-				formulaIdents.add(s);
-			}
+		int n = formulaList.size();
+		for (int i = 0; i < n; i++) {
+			String s = formulaList.getFormulaName(i);
+			checkAndAddIdentifier(s, formulaList.getFormulaNameIdent(i), "formula");
 		}
 	}
 
@@ -861,12 +1022,13 @@ public class ModulesFile extends ASTElement implements ModelInfo
 			for (i2 = 0; i2 < n2; i2++) {
 				s = module.getOldName(i2);
 				if (!renamedSoFar.add(s)) {
-					throw new PrismLangException("Identifier \"" + s + "\" is renamed more than once in module \"" + module.getName() + "\"",
-							module.getOldNameASTElement(i2));
+					throw new PrismLangException("Identifier \"" + s + "\" is renamed more than once in module \""
+							+ module.getName() + "\"", module.getOldNameASTElement(i2));
 				}
 				if (formulaList.getFormulaIndex(s) != -1) {
-					throw new PrismLangException("Formula \"" + s + "\" cannot be renamed since formulas are expanded before module renaming",
-							module.getOldNameASTElement(i2));
+					throw new PrismLangException("Formula \"" + s
+							+ "\" cannot be renamed since formulas are expanded before module renaming", module
+							.getOldNameASTElement(i2));
 				}
 			}
 			// Then rename (a copy of) base module and replace
@@ -882,76 +1044,11 @@ public class ModulesFile extends ASTElement implements ModelInfo
 
 	private void checkLabelIdents() throws PrismLangException
 	{
-		int i, n;
-		String s;
-		Vector<String> labelIdents;
-
-		// go thru labels
-		n = labelList.size();
-		labelIdents = new Vector<String>();
-		for (i = 0; i < n; i++) {
-			s = labelList.getLabelName(i);
-			// see if ident has been used already for a label
-			if (labelIdents.contains(s)) {
-				throw new PrismLangException("Duplicated label name \"" + s + "\"", labelList.getLabelNameIdent(i));
-			} else {
-				labelIdents.add(s);
-			}
+		int n = labelList.size();
+		for (int i = 0; i < n; i++) {
+			String s = labelList.getLabelName(i);
+			checkAndAddQuotedIdentifier(s, labelList.getLabelNameIdent(i), "label");
 		}
-	}
-
-	// sort modules by their appearance in system ... endsystem constructs
-	private void sortModules() throws PrismLangException
-	{
-		SystemDefn sys = getSystemDefn();
-		// only relevant if system ... endsystem construct present
-		if (sys == null)
-			return;
-		// de-bracket
-		while (sys instanceof SystemBrackets) {
-			sys = ((SystemBrackets) sys).getOperand();
-		}
-
-		ArrayList<SystemReference> sysRefs = new ArrayList<SystemReference>();
-		extractSubsystemRefs(sys, sysRefs);
-
-		// Extract modules in each subsystem ...
-		int numComps = sysRefs.size();
-		ArrayList<List<String>> moduleNameLists = new ArrayList<List<String>>();
-		for (int i = 0; i < numComps; i++) {
-			SystemDefn subsys = getSystemDefnByName(sysRefs.get(i).getName());
-			if (subsys == null) {
-				throw new PrismLangException("Unknown system reference" + sysRefs.get(i));
-			}
-			ArrayList<String> moduleNames = new ArrayList<String>();
-			extractSubsystemModuleNames(subsys, moduleNames, false);
-			moduleNameLists.add(moduleNames);
-		}
-		// moduleNameLists now contains the module names in order
-
-		// ... to add them in order
-		Vector<Object> sorted_modules = new Vector<Object>();
-		for (int i = 0; i < numComps; i++) {
-			// this.modules contains the modules objects
-			// this.modulesNames contain the module Names ... gets sorted afterwards in tidyUp using checkModuleNames
-			for (int j = 0; j < moduleNameLists.get(i).size(); j++) {
-				int moduleIndex = getModuleIndex(moduleNameLists.get(i).get(j));
-				if (moduleIndex < 0)
-					throw new PrismLangException("Unknown module " + moduleNameLists.get(i).get(j));
-				sorted_modules.add(getModule(moduleIndex));
-			}
-
-		}
-
-		// add modules that are not in system ... endsystem in arbitrary order now
-		Vector<Object> new_modules = new Vector<Object>(sorted_modules);
-		for (Object m : this.modules) {
-			if (!sorted_modules.contains(m)) {
-				new_modules.add(m);
-			}
-		}
-
-		this.modules = new_modules;
 	}
 
 	// check module names
@@ -974,7 +1071,8 @@ public class ModulesFile extends ASTElement implements ModelInfo
 			s = getModule(i).getName();
 			for (j = 0; j < i; j++) {
 				if (s.equals(moduleNames[j])) {
-					throw new PrismLangException("Duplicated module name \"" + s + "\"", getModule(i).getNameASTElement());
+					throw new PrismLangException("Duplicated module name \"" + s + "\"", getModule(i)
+							.getNameASTElement());
 				}
 			}
 			moduleNames[i] = s;
@@ -1010,23 +1108,31 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		if (defaultSystemDefn != null) {
 			defaultSystemDefn.getSynchs(synchs, this);
 		}
+		
+		// store same info in actions list (for ModelInfo)
+		actions = new ArrayList<Object>(synchs);
 	}
 
+	@Override
+	public List<Object> getActions()
+	{
+		return actions;
+	}
+	
+	@Override
+	public String getActionStringDescription()
+	{
+		return "Module/[action]";
+	}
+	
 	// check constant identifiers
 
 	private void checkConstantIdents() throws PrismLangException
 	{
-		int i, n;
-		String s;
-
-		n = constantList.size();
-		for (i = 0; i < n; i++) {
-			s = constantList.getConstantName(i);
-			if (isIdentUsed(s)) {
-				throw new PrismLangException("Duplicated identifier \"" + s + "\"", constantList.getConstantNameIdent(i));
-			} else {
-				constantIdents.add(s);
-			}
+		int n = constantList.size();
+		for (int i = 0; i < n; i++) {
+			String s = constantList.getConstantName(i);
+			checkAndAddIdentifier(s, constantList.getConstantNameIdent(i), "constant");
 		}
 	}
 
@@ -1034,42 +1140,32 @@ public class ModulesFile extends ASTElement implements ModelInfo
 
 	private void checkVarNames() throws PrismLangException
 	{
-		int i, j, n, m;
-		Module module;
-		String s;
-
 		// compile list of all var names
 		// and check as we go through
 
 		// globals
-		n = getNumGlobals();
-		for (i = 0; i < n; i++) {
-			s = getGlobal(i).getName();
-			if (isIdentUsed(s)) {
-				throw new PrismLangException("Duplicated identifier \"" + s + "\"", getGlobal(i));
-			} else {
-				varIdents.add(s);
-				varDecls.add(getGlobal(i));
-				varNames.add(s);
-				varTypes.add(getGlobal(i).getType());
-			}
+		int n = getNumGlobals();
+		for (int i = 0; i < n; i++) {
+			String s = getGlobal(i).getName();
+			checkAndAddIdentifier(s, getGlobal(i), "variable");
+			varDecls.add(getGlobal(i));
+			varNames.add(s);
+			varTypes.add(getGlobal(i).getType());
+			varModules.add(-1);
 		}
 
 		// locals
-		n = modules.size();
-		for (i = 0; i < n; i++) {
-			module = getModule(i);
-			m = module.getNumDeclarations();
-			for (j = 0; j < m; j++) {
-				s = module.getDeclaration(j).getName();
-				if (isIdentUsed(s)) {
-					throw new PrismLangException("Duplicated identifier \"" + s + "\"", module.getDeclaration(j));
-				} else {
-					varIdents.add(s);
-					varDecls.add(module.getDeclaration(j));
-					varNames.add(s);
-					varTypes.add(module.getDeclaration(j).getType());
-				}
+		int numModules = modules.size();
+		for (int i = 0; i < numModules; i++) {
+			Module module = getModule(i);
+			int numLocals = module.getNumDeclarations();
+			for (int j = 0; j < numLocals; j++) {
+				String s = module.getDeclaration(j).getName();
+				checkAndAddIdentifier(s, module.getDeclaration(j), "variable");
+				varDecls.add(module.getDeclaration(j));
+				varNames.add(s);
+				varTypes.add(module.getDeclaration(j).getType());
+				varModules.add(i);
 			}
 		}
 
@@ -1102,13 +1198,21 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	{
 		// First make sure player info is present for games (and not for others)
 		if (modelType.multiplePlayers()) {
-			// (NB: compositional games don't need this)
-			if (players.isEmpty() && systemDefns.size() == 0) {
+			if (players.isEmpty()) {
 				throw new PrismLangException(modelType + " model has no player definitions");
 			}
 		} else {
 			if (!players.isEmpty()) {
 				throw new PrismLangException("Player definitions not allowed for " + modelType + " models", players.get(0));
+			}
+		}
+		
+		// Check for duplicate player names
+		HashSet<String> playerNames = new HashSet<String>();
+		for (Player player : players) {
+			String name = player.getName();
+			if (!"".equals(name) && !playerNames.add(name)) {
+				throw new PrismLangException("Duplicate player name \"" + name + "\"", player); 
 			}
 		}
 		
@@ -1165,7 +1269,7 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		}
 
 		// Check for cyclic dependencies...
-
+		
 		// Create boolean matrix of dependencies
 		// (matrix[i][j] is true if prop i contains a ref to prop j)
 		boolean matrix[][] = new boolean[n][n];
@@ -1186,17 +1290,21 @@ public class ModulesFile extends ASTElement implements ModelInfo
 			String s = "Cyclic dependency from references in system...endsystem definition \"" + getSystemDefnName(firstCycle) + "\"";
 			throw new PrismLangException(s, getSystemDefn(firstCycle));
 		}
-
-		// SMG stuff
-		if (modelType == ModelType.SMG) {
-			SystemDefn sys = getSystemDefn();
-			while (sys instanceof SystemBrackets) {
-				sys = ((SystemBrackets) sys).getOperand();
-			}
-			extractSubsystemRefs(sys, new ArrayList<SystemReference>(), true);
+	}
+	
+	/**
+	 * Check "observables...endobservables" construct
+	 */
+	private void checkObservables() throws PrismLangException
+	{
+		if (getModelType().partiallyObservable() && !hasObservables) {
+			throw new PrismLangException(getModelType() + "s must specify observables");
+		}
+		if (hasObservables() && !getModelType().partiallyObservable()) {
+			throw new PrismLangException(getModelType() + "s cannot specify observables");
 		}
 	}
-
+	
 	/**
 	  * Perform any required semantic checks.
 	  * These checks are done *before* any undefined constants have been defined.
@@ -1234,24 +1342,43 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	 * The current constant values (if set) are available via {@link #getConstantValues()}. 
 	 * Calling this method also triggers some additional semantic checks
 	 * that can only be done once constant values have been specified.
+	 * <br>
+	 * Constant values are evaluated using standard (integer, floating-point) arithmetic.
 	 */
 	public void setUndefinedConstants(Values someValues) throws PrismLangException
 	{
-		undefinedConstantValues = someValues == null ? null : new Values(someValues);
-		constantValues = constantList.evaluateConstants(someValues, null);
-		doSemanticChecksAfterConstants();
+		setUndefinedConstants(someValues, false);
 	}
 
 	/**
-	 * Set values for *some* undefined constants and then evaluate all constants where possible.
+	 * Set values for *all* undefined constants and then evaluate all constants.
 	 * If there are no undefined constants, {@code someValues} can be null.
 	 * Undefined constants can be subsequently redefined to different values with the same method.
-	 * The current constant values (if set) are available via {@link #getConstantValues()}.
+	 * The current constant values (if set) are available via {@link #getConstantValues()}. 
+	 * Calling this method also triggers some additional semantic checks
+	 * that can only be done once constant values have been specified.
+	 * <br>
+	 * Constant values are evaluated using either standard (integer, floating-point) arithmetic
+	 * or exact arithmetic, depending on the value of the {@code exact} flag.
 	 */
-	public void setSomeUndefinedConstants(Values someValues) throws PrismLangException
+	public void setUndefinedConstants(Values someValues, boolean exact) throws PrismLangException
 	{
 		undefinedConstantValues = someValues == null ? null : new Values(someValues);
-		constantValues = constantList.evaluateSomeConstants(someValues, null);
+		constantValues = constantList.evaluateConstants(someValues, null, exact);
+		doSemanticChecksAfterConstants();
+	}
+
+	@Override
+	public void setSomeUndefinedConstants(Values someValues) throws PrismLangException
+	{
+		setSomeUndefinedConstants(someValues, false);
+	}
+
+	@Override
+	public void setSomeUndefinedConstants(Values someValues, boolean exact) throws PrismLangException
+	{
+		undefinedConstantValues = someValues == null ? null : new Values(someValues);
+		constantValues = constantList.evaluateSomeConstants(someValues, null, exact);
 		doSemanticChecksAfterConstants();
 	}
 
@@ -1263,7 +1390,7 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	{
 		return constantList.isDefinedConstant(name);
 	}
-
+	
 	/**
 	 * Get access to the values that have been provided for undefined constants in the model 
 	 * (e.g. via the method {@link #setUndefinedConstants(Values)}).
@@ -1290,8 +1417,25 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	 * Assumes that values for constants have been provided for the model.
 	 * Note: This method replaces the old getInitialValues() method,
 	 * since State objects are now preferred to Values objects for efficiency.
+	 * <br>
+	 * The init expression is evaluated using the default evaluate, i.e.,
+	 * not using exact arithmetic.
 	 */
 	public State getDefaultInitialState() throws PrismLangException
+	{
+		return getDefaultInitialState(false);
+	}
+
+	/**
+	 * Create a State object representing the default initial state of this model.
+	 * If there are potentially multiple initial states (because the model has an
+	 * init...endinit specification), this method returns null;
+	 * Assumes that values for constants have been provided for the model.
+	 * Note: This method replaces the old getInitialValues() method,
+	 * since State objects are now preferred to Values objects for efficiency.
+	 * @param exact use exact arithmetic in evaluation of init expression?
+	 */
+	public State getDefaultInitialState(boolean exact) throws PrismLangException
 	{
 		int i, j, count, n, n2;
 		Module module;
@@ -1310,8 +1454,13 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		n = getNumGlobals();
 		for (i = 0; i < n; i++) {
 			decl = getGlobal(i);
-			initialValue = decl.getStartOrDefault().evaluate(constantValues);
-			initialValue = getGlobal(i).getType().castValueTo(initialValue);
+			if (exact) {
+				BigRational r = decl.getStartOrDefault().evaluateExact(constantValues);
+				initialValue = getGlobal(i).getType().castFromBigRational(r);
+			} else {
+				initialValue = decl.getStartOrDefault().evaluate(constantValues);
+				initialValue = getGlobal(i).getType().castValueTo(initialValue);
+			}
 			initialState.setValue(count++, initialValue);
 		}
 		n = getNumModules();
@@ -1320,8 +1469,13 @@ public class ModulesFile extends ASTElement implements ModelInfo
 			n2 = module.getNumDeclarations();
 			for (j = 0; j < n2; j++) {
 				decl = module.getDeclaration(j);
-				initialValue = decl.getStartOrDefault().evaluate(constantValues);
-				initialValue = module.getDeclaration(j).getType().castValueTo(initialValue);
+				if (exact) {
+					BigRational r = decl.getStartOrDefault().evaluateExact(constantValues);
+					initialValue = module.getDeclaration(j).getType().castFromBigRational(r);
+				} else {
+					initialValue = decl.getStartOrDefault().evaluate(constantValues);
+					initialValue = module.getDeclaration(j).getType().castValueTo(initialValue);
+				}
 				initialState.setValue(count++, initialValue);
 			}
 		}
@@ -1334,49 +1488,17 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	 * Deprecated: Use getDefaultInitialState() instead
 	 * (or new Values(getDefaultInitialState(), modulesFile)).
 	 */
+	@Deprecated
 	public Values getInitialValues() throws PrismLangException
 	{
-		int i, j, n, n2;
-		Module module;
-		Declaration decl;
-		Values values;
-		Object initialValue;
-
-		if (initStates != null) {
-			throw new PrismLangException("There are multiple initial states");
-		}
-
-		// set up variable list
-		values = new Values();
-
-		// first add all globals
-		n = getNumGlobals();
-		for (i = 0; i < n; i++) {
-			decl = getGlobal(i);
-			initialValue = decl.getStartOrDefault().evaluate(constantValues);
-			initialValue = getGlobal(i).getType().castValueTo(initialValue);
-			values.addValue(decl.getName(), initialValue);
-		}
-		// then add all module variables
-		n = getNumModules();
-		for (i = 0; i < n; i++) {
-			module = getModule(i);
-			n2 = module.getNumDeclarations();
-			for (j = 0; j < n2; j++) {
-				decl = module.getDeclaration(j);
-				initialValue = decl.getStartOrDefault().evaluate(constantValues);
-				initialValue = module.getDeclaration(j).getType().castValueTo(initialValue);
-				values.addValue(decl.getName(), initialValue);
-			}
-		}
-
-		return values;
+		State stateInit = getDefaultInitialState();
+		return (stateInit == null) ? null : new Values(stateInit, this);
 	}
 
 	/**
 	 * Recompute all information about variables.
 	 * More precisely... TODO
-	 * Note: This does not re-compute the list of all identifiers used,
+	 * Note: This does not re-compute the list of all identifiers used. 
 	 */
 	public void recomputeVariableinformation() throws PrismLangException
 	{
@@ -1391,11 +1513,13 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		varDecls = new Vector<Declaration>();
 		varNames = new Vector<String>();
 		varTypes = new Vector<Type>();
+		varModules = new Vector<Integer>();
 		// Globals
 		for (Declaration decl : globals) {
 			varDecls.add(decl);
 			varNames.add(decl.getName());
 			varTypes.add(decl.getType());
+			varModules.add(-1);
 		}
 		// Locals
 		n = modules.size();
@@ -1404,6 +1528,7 @@ public class ModulesFile extends ASTElement implements ModelInfo
 				varDecls.add(decl);
 				varNames.add(decl.getName());
 				varTypes.add(decl.getType());
+				varModules.add(i);
 			}
 		}
 		// Find all instances of variables, replace identifiers with variables.
@@ -1411,23 +1536,79 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		findAllVars(varNames, varTypes, noErrorOnVariableNotPresent);
 	}
 
-	@Override
-	public boolean rewardStructHasTransitionRewards(int i)
-	{
-		RewardStruct rewStr = getRewardStruct(i);
-		return rewStr.getNumTransItems() > 0;
-	}
-
 	/**
 	 * Create a VarList object storing information about all variables in this model.
 	 * Assumes that values for constants have been provided for the model.
 	 * Also performs various syntactic checks on the variables.   
 	 */
-	public VarList createVarList() throws PrismLangException
+	public VarList createVarList() throws PrismException
 	{
 		return new VarList(this);
 	}
 
+	/**
+	 * Determine the actual model type
+	 */
+	private void finaliseModelType()
+	{
+		// First, fix a "base" model type
+		// If unspecified, auto-detect
+		if (modelTypeInFile == null) {
+			boolean isNonProb = isNonProbabilistic();
+			modelType = isNonProb ? ModelType.LTS : ModelType.MDP;
+		}
+		// Otherwise, it's just whatever was specified
+		else {
+			modelType = modelTypeInFile;
+		}
+		// Then, even if already specified, update the model type
+		// based on the existence of certain features
+		boolean isRealTime = containsClockVariables();
+		boolean isPartObs = hasObservables();
+		if (isRealTime) {
+			if (modelType == ModelType.MDP || modelType == ModelType.LTS) {
+				modelType = ModelType.PTA;
+			} else if (modelType == ModelType.SMG || modelType == ModelType.STPG) {
+				modelType = ModelType.TPTG;
+			}
+		}
+		if (isPartObs) {
+			if (modelType == ModelType.MDP || modelType == ModelType.LTS) {
+				modelType = ModelType.POMDP;
+			} else if (modelType == ModelType.PTA) {
+				modelType = ModelType.POPTA;
+			}
+		}
+	}
+	
+	/**
+	 * Check whether this model is non-probabilistic,
+	 * i.e., whether none of the commands are probabilistic. 
+	 */
+	private boolean isNonProbabilistic()
+	{
+		try {
+			// Search through commands, checking for probabilities
+			accept(new ASTTraverse()
+			{
+				public Object visit(Updates e) throws PrismLangException
+				{
+					int n = e.getNumUpdates();
+					for (int i = 0; i < n; i++) {
+						if (e.getProbability(i) != null) {
+							throw new PrismLangException("Found one");
+						}
+					}
+					visitPost(e);
+					return null;
+				}
+			});
+		} catch (PrismLangException e) {
+			return false;
+		}
+		return true;
+	}
+	
 	// Methods required for ASTElement:
 
 	/**
@@ -1446,7 +1627,13 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		String s = "", tmp;
 		int i, n;
 
-		s += modelType.toString().toLowerCase() + "\n\n";
+		if (modelTypeInFile != null) {
+			s += modelTypeInFile.toString().toLowerCase() + "\n\n";
+		}
+
+		for (Player player : players) {
+			s += player + "\n\n";
+		}
 
 		tmp = "" + formulaList;
 		if (tmp.length() > 0)
@@ -1462,6 +1649,10 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		if (tmp.length() > 0)
 			tmp += "\n";
 		s += tmp;
+
+		if (hasObservables()) {
+			s += "observables " + String.join(",", obsVars) + " endobservables\n\n";
+		}
 
 		n = getNumGlobals();
 		for (i = 0; i < n; i++) {
@@ -1483,10 +1674,6 @@ public class ModulesFile extends ASTElement implements ModelInfo
 			s += systemDefns.get(i) + " endsystem\n";
 		}
 
-		for (Player player : players) {
-			s += "\n" + player + "\n";
-		}
-
 		n = getNumRewardStructs();
 		for (i = 0; i < n; i++) {
 			s += "\n" + getRewardStruct(i);
@@ -1505,26 +1692,13 @@ public class ModulesFile extends ASTElement implements ModelInfo
 	@SuppressWarnings("unchecked")
 	public ASTElement deepCopy()
 	{
-		try {
-			return deepCopy(null);
-		} catch (PrismLangException e) {
-			// never occurs since null is passed to deepCopy
-			return null;
-		}
-	}
-
-	/**
-	* If modulesToAdd is null, then this is a standard deep copy,
-	* otherwise, the modules in modulesToAdd are selected.
-	**/
-	public ASTElement deepCopy(List<String> modulesToAdd) throws PrismLangException
-	{
 		int i, n;
 		ModulesFile ret = new ModulesFile();
 
 		// Copy ASTElement stuff
 		ret.setPosition(this);
 		// Copy type
+		ret.setModelTypeInFile(modelTypeInFile);
 		ret.setModelType(modelType);
 		// Deep copy main components
 		ret.setFormulaList((FormulaList) formulaList.deepCopy());
@@ -1535,23 +1709,12 @@ public class ModulesFile extends ASTElement implements ModelInfo
 			ret.addGlobal((Declaration) getGlobal(i).deepCopy());
 		}
 		n = getNumModules();
-		if (modulesToAdd == null) {
-			for (i = 0; i < n; i++) {
-				ret.addModule((Module) getModule(i).deepCopy());
-			}
-		} else {
-			for (String moduleName : modulesToAdd) {
-				int moduleIndex = getModuleIndex(moduleName);
-				if (moduleIndex == -1)
-					throw new PrismLangException("No module " + moduleName + " is present");
-				ret.addModule((Module) getModule(moduleIndex).deepCopy());
-			}
+		for (i = 0; i < n; i++) {
+			ret.addModule((Module) getModule(i).deepCopy());
 		}
-		if (modulesToAdd == null) {
-			n = getNumSystemDefns();
-			for (i = 0; i < n; i++) {
-				ret.addSystemDefn(getSystemDefn(i).deepCopy(), getSystemDefnName(i));
-			}
+		n = getNumSystemDefns();
+		for (i = 0; i < n; i++) {
+			ret.addSystemDefn(getSystemDefn(i).deepCopy(), getSystemDefnName(i));
 		}
 		n = getNumRewardStructs();
 		for (i = 0; i < n; i++) {
@@ -1559,143 +1722,28 @@ public class ModulesFile extends ASTElement implements ModelInfo
 		}
 		if (initStates != null)
 			ret.setInitialStates(initStates.deepCopy());
-		if (modulesToAdd == null) { // the default if noncompositional
-			for (Player player : players)
-				ret.addPlayer(player.deepCopy());
-		} else {
-			// outputs are player 1
-			Player p1 = new Player("output");
-			ret.addPlayer(p1);
-			// inputs are player 2
-			Player p2 = new Player("input");
-			ret.addPlayer(p2);
-			for (String moduleName : modulesToAdd) {
-				int moduleIndex = getModuleIndex(moduleName);
-				// adding output actions (ignore copies between modules)
-				for (String out : getModule(moduleIndex).getAllOutputActions())
-					if (!p1.getActions().contains(out))
-						p1.addAction(out);
-				// adding input actions (ignore copies between modules)
-				for (String in : getModule(moduleIndex).getAllInputActions())
-					if (!p2.getActions().contains(in))
-						p2.addAction(in);
-			}
-		}
+		ret.hasObservables = hasObservables;
+		for (String ov : obsVars)
+			ret.addObservableVar(ov);
+		for (Player player : players)
+			ret.addPlayer(player.deepCopy());
 		// Copy other (generated) info
-		ret.formulaIdents = (formulaIdents == null) ? null : (Vector<String>) formulaIdents.clone();
-		ret.constantIdents = (constantIdents == null) ? null : (Vector<String>) constantIdents.clone();
-		ret.varIdents = (varIdents == null) ? null : (Vector<String>) varIdents.clone();
-		if (modulesToAdd == null) {
-			ret.moduleNames = (moduleNames == null) ? null : moduleNames.clone();
-		} else {
-			if (moduleNames != null) {
-				ret.moduleNames = modulesToAdd.toArray(new String[0]);
-			} else {
-				ret.moduleNames = null;
-			}
-		}
-		ret.synchs = (synchs == null) ? null : (Vector<String>) synchs.clone();
+		ret.identUsage = (identUsage == null) ? null : identUsage.deepCopy();
+		ret.quotedIdentUsage = (quotedIdentUsage == null) ? null : quotedIdentUsage.deepCopy();
+		ret.moduleNames = (moduleNames == null) ? null : moduleNames.clone();
+		ret.synchs = (synchs == null) ? null : (Vector<String>)synchs.clone();
+		ret.actions = (actions == null) ? null : new ArrayList<Object>(actions);
 		if (varDecls != null) {
 			ret.varDecls = new Vector<Declaration>();
 			for (Declaration d : varDecls)
 				ret.varDecls.add((Declaration) d.deepCopy());
 		}
-		ret.varNames = (varNames == null) ? null : (Vector<String>) varNames.clone();
-		ret.varTypes = (varTypes == null) ? null : (Vector<Type>) varTypes.clone();
+		ret.varNames = (varNames == null) ? null : (Vector<String>)varNames.clone();
+		ret.varTypes = (varTypes == null) ? null : (Vector<Type>)varTypes.clone();
+		ret.varModules = (varModules == null) ? null : (Vector<Integer>)varModules.clone();
 		ret.constantValues = (constantValues == null) ? null : new Values(constantValues);
-
-		if (modulesToAdd != null)
-			// no error if variable is not present, since we selected only a subset of modules,
-			// the real check was done before anyway on the full modules file
-			ret.recomputeVariableinformation(true);
-
+		
 		return ret;
-	}
-
-	/**
-	 * Extract the top-level system references from a SystemFullParallel
-	 **/
-	public static void extractSubsystemRefs(SystemDefn sysPar, List<SystemReference> sysRefs) throws PrismLangException
-	{
-		extractSubsystemRefs(sysPar, sysRefs, false);
-	}
-	
-	/**
-	 * Extract the top-level system references from a SystemFullParallel
-	 **/
-	public static void extractSubsystemRefs(SystemDefn sysPar, List<SystemReference> sysRefs, boolean check) throws PrismLangException
-	{
-		if (sysPar instanceof SystemFullParallel) {
-			int n = ((SystemFullParallel) sysPar).getNumOperands();
-			for (int i = 0; i < n; i++) {
-				if (((SystemFullParallel) sysPar).getOperand(i) instanceof SystemReference) {
-					sysRefs.add((SystemReference) ((SystemFullParallel) sysPar).getOperand(i));
-				} else if (check) {
-					throw new PrismLangException("For compositional analysis, the system definition should be a parallel composition of subsystems");
-				}
-			}
-		} else if (sysPar instanceof SystemReference) {
-			sysRefs.add((SystemReference) sysPar);
-		} else if (check) {
-			throw new PrismLangException("For compositional analysis, the system definition should be a parallel composition of subsystems");
-		}
-	}
-
-	/**
-	 * Extract the top-level system references from a SystemParallel
-	 **/
-	public static void extractSubsystemRefs(SystemParallel sysPar, List<SystemReference> sysRefs) throws PrismLangException
-	{
-		extractSubsystemRefs(sysPar, sysRefs, false);
-	}
-	
-	/**
-	 * Extract the top-level system references from a SystemParallel
-	 **/
-	public static void extractSubsystemRefs(SystemParallel sysPar, List<SystemReference> sysRefs, boolean check) throws PrismLangException
-	{
-		// Operand 1
-		if (sysPar.getOperand1() instanceof SystemReference) {
-			sysRefs.add((SystemReference) sysPar.getOperand1());
-		} else if (sysPar.getOperand1() instanceof SystemParallel) {
-			extractSubsystemRefs((SystemParallel) sysPar.getOperand1(), sysRefs, check);
-		} else if (check) {
-			throw new PrismLangException("For compositional analysis, the system definition should be a parallel composition of subsystems.");
-		}
-		// Operand 2
-		if (sysPar.getOperand2() instanceof SystemReference) {
-			sysRefs.add((SystemReference) sysPar.getOperand2());
-		} else if (sysPar.getOperand2() instanceof SystemParallel) {
-			extractSubsystemRefs((SystemParallel) sysPar.getOperand2(), sysRefs, check);
-		} else if (check) {
-			throw new PrismLangException("For compositional analysis, the system definition should be a parallel composition of subsystems.");
-		}
-	}
-
-	/**
-	 * Extract the modules from the SystemDefn for a component
-	 **/
-	public static void extractSubsystemModuleNames(SystemDefn sys, ArrayList<String> moduleNames) throws PrismLangException
-	{
-		extractSubsystemModuleNames(sys, moduleNames, false);
-	}
-	
-	/**
-	 * Extract the modules from the SystemDefn for a component
-	 **/
-	public static void extractSubsystemModuleNames(SystemDefn sys, ArrayList<String> moduleNames, boolean check) throws PrismLangException
-	{
-		if (sys instanceof SystemModule) {
-			moduleNames.add(((SystemModule) sys).getName());
-		} else if (sys instanceof SystemFullParallel) {
-			SystemFullParallel sysPar = (SystemFullParallel) sys;
-			int n = sysPar.getNumOperands();
-			for (int i = 0; i < n; i++) {
-				extractSubsystemModuleNames(sysPar.getOperand(i), moduleNames, check);
-			}
-		} else if (check) {
-			throw new PrismLangException("For compositional analysis, each subsystem should be a parallel composition of modules");
-		}
 	}
 }
 

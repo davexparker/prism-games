@@ -255,6 +255,7 @@ jint flags
 	std::unique_ptr<ExportIterations> iterationExport;
 	if (PS_GetFlagExportIterations()) {
 		iterationExport.reset(new ExportIterations("PS_NondetReachReward (interval)"));
+		PS_PrintToMainLog(env, "Exporting iterations to %s\n", iterationExport->getFileName().c_str());
 		iterationExport->exportVector(soln_below, n, 0);
 		iterationExport->exportVector(soln_above, n, 1);
 	}
@@ -394,7 +395,7 @@ jint flags
 			}
 			// set vector element
 			// (if there were no choices from this state, reward is zero/infinity)
-			helper.updateValueFromBelow(soln_above2[i], soln_above[i], (h1 > l1) ? d1 : inf_vec[i] > 0 ? HUGE_VAL : 0);
+			helper.updateValueFromAbove(soln_above2[i], soln_above[i], (h1 > l1) ? d1 : inf_vec[i] > 0 ? HUGE_VAL : 0);
 		}
 
 		if (iterationExport) {
@@ -490,6 +491,7 @@ jint flags
 	}
 
 	if (helper.flag_select_midpoint() && soln_below) { // we did converge, select midpoint
+		last_error_bound = measure.value();
 		helper.selectMidpoint(soln_below, soln_above, n);
 
 		if (iterationExport) {

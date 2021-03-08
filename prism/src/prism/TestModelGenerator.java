@@ -31,19 +31,18 @@ import java.io.FileNotFoundException;
 import java.util.Arrays;
 import java.util.List;
 
+import explicit.ConstructModel;
+import explicit.DTMCModelChecker;
 import parser.State;
-import parser.VarList;
-import parser.ast.Declaration;
 import parser.ast.DeclarationInt;
+import parser.ast.DeclarationType;
 import parser.ast.Expression;
 import parser.ast.Player;
 import parser.ast.PropertiesFile;
 import parser.type.Type;
 import parser.type.TypeInt;
-import explicit.ConstructModel;
-import explicit.DTMCModelChecker;
 
-public class TestModelGenerator extends DefaultModelGenerator
+public class TestModelGenerator implements ModelGenerator
 {
 	protected State exploreState;
 	protected int x;
@@ -63,12 +62,6 @@ public class TestModelGenerator extends DefaultModelGenerator
 	}
 
 	@Override
-	public int getNumVars()
-	{
-		return 1;
-	}
-	
-	@Override
 	public List<String> getVarNames()
 	{
 		return varNames;
@@ -81,9 +74,9 @@ public class TestModelGenerator extends DefaultModelGenerator
 	}
 
 	@Override
-	public int getNumLabels()
+	public DeclarationType getVarDeclarationType(int i) throws PrismException
 	{
-		return 1;
+		return new DeclarationInt(Expression.Int(0), Expression.Int(n));
 	}
 	
 	@Override
@@ -108,12 +101,6 @@ public class TestModelGenerator extends DefaultModelGenerator
 	}
 
 	@Override
-	public State getExploreState()
-	{
-		return exploreState;
-	}
-
-	@Override
 	public int getNumChoices() throws PrismException
 	{
 		return 1;
@@ -123,12 +110,6 @@ public class TestModelGenerator extends DefaultModelGenerator
 	public int getNumTransitions(int i) throws PrismException
 	{
 		return x > 0 && x < n ? 2 : 1;
-	}
-
-	@Override
-	public Object getTransitionAction(int i) throws PrismException
-	{
-		return null;
 	}
 
 	@Override
@@ -165,25 +146,6 @@ public class TestModelGenerator extends DefaultModelGenerator
 		}
 	}
 
-	@Override
-	public boolean rewardStructHasTransitionRewards(int i)
-	{
-		return false;
-	}
-
-	@Override
-	public VarList createVarList()
-	{
-		VarList varList = new VarList();
-		try {
-			varList.addVar(new Declaration("x", new DeclarationInt(Expression.Int(0), Expression.Int(n))), 0, null);
-		} catch (PrismLangException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		return varList;
-	}
-	
 	public static void main(String args[])
 	{
 		try {
@@ -197,6 +159,7 @@ public class TestModelGenerator extends DefaultModelGenerator
 				// Direct usage of model constructor/checker 
 				TestModelGenerator modelGen = new TestModelGenerator(10);
 				ConstructModel constructModel = new ConstructModel(prism);
+				constructModel.setSortStates(true);
 				explicit.Model model = constructModel.constructModel(modelGen);
 				model.exportToDotFile(new PrismFileLog("test.dot"), null, true);
 				DTMCModelChecker mc = new DTMCModelChecker(prism);
@@ -222,26 +185,5 @@ public class TestModelGenerator extends DefaultModelGenerator
 			System.err.println("Error: " + e.getMessage());
 		}
 
-	}
-
-	@Override
-	public int getPlayerNumberForChoice(int i) throws PrismException
-	{
-		// TODO Auto-generated method stub
-		return 0;
-	}
-
-	@Override
-	public int getNumPlayers()
-	{
-		// TODO Auto-generated method stub
-		return 0;
-	}
-
-	@Override
-	public Player getPlayer(int i)
-	{
-		// TODO Auto-generated method stub
-		return null;
 	}
 }
