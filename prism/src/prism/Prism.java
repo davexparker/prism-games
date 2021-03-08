@@ -1846,7 +1846,7 @@ public class Prism extends PrismComponent implements PrismSettingsListener
 		case CTMDP:
 		case LTS:
 		case POMDP:
-			if (!getExplicit()) {
+			if (!getExplicit() && getEngine() != MTBDD) {
 				mainLog.println("\nSwitching to explicit engine, which supports " + currentModelType + "s...");
 				engineOld = getEngine();
 				engineSwitched = true;
