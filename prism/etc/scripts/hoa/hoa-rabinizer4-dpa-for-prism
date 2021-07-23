@@ -1,0 +1,19 @@
+#! /bin/bash
+
+# Interface wrapper for calling Rabinizer4 (transition-based DRA)
+# Invoke from PRISM with
+#  -ltl2datool hoa-rabinizer4-dpa-for-prism -ltl2dasyntax rabinizer
+
+export RABINIZER4_SCRIPT=ltl2dpa
+
+# Expects the rabinizer script to be in the path,
+# otherwise specify its location using
+#  export RABINIZER4_BIN_DIR=path/to/rabinizer4/bin
+export RABINIZER4_BIN_DIR=/Users/dxp/tools/rabinizer4/bin
+
+# Take Rabinizer script from the RABINIZER4 environment variable
+# Otherwise, search the PATH
+RABINIZER4_RUN=${RABINIZER4_BIN_DIR-.}/$RABINIZER4_SCRIPT
+
+# Run script
+$RABINIZER4_RUN -I "$1" --complete > "$2"
