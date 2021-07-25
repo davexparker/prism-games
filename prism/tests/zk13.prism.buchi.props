@@ -1,0 +1,22 @@
+// Example from Fig 8 of "Infinite Games - Lecture Notes"
+// by Martin Zimmermann and Felix Klein
+
+label "inf" = s=4 | s=6;
+
+// RESULT: true
+filter(forall, <<P0>> (G F "inf") <=> (s=3|s=6|s=7));
+
+// RESULT: true
+filter(forall, <<P0>> (G F s=6) <=> (s=3|s=6|s=7));
+
+// RESULT: true
+filter(forall, <<P0>> (G F s=4) <=> (false));
+
+// RESULT: true
+filter(forall, <<P1>> (G F (s=0|s=2)) <=> (s=0|s=1|s=2|s=4|s=5|s=8));
+
+// RESULT: true
+filter(forall, <<P1>> (G F s=1) <=> (s=0|s=1|s=2|s=4|s=5|s=8));
+
+// RESULT: true
+filter(forall, <<P1>> (G F s=0) <=> (false));

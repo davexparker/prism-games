@@ -1,0 +1,10 @@
+// Example from Fig 4 of "Infinite Games - Lecture Notes"
+// by Martin Zimmermann and Felix Klein
+
+label "target" = s=4 | s=5;
+
+// RESULT: true
+filter(forall, <<P0>> (F "target") <=> (s=3|s=4|s=5|s=6|s=7|s=8));
+
+// RESULT: true
+filter(forall, <<P1>> (F "target") <=> (s=2|s=4|s=5|s=8));
