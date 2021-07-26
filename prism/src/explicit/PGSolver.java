@@ -26,20 +26,20 @@
 
 package explicit;
 
-import prism.PrismComponent;
-
 /**
  * Solve parity games (PGs).
  */
 public abstract class PGSolver extends TGSolver
 {
-
+	protected TGModelChecker mc;
+	
 	/**
 	 * Create a new parity game solver.
 	 */
-	public PGSolver(PrismComponent parent)
+	public PGSolver(TGModelChecker mc)
 	{
-		super(parent);
+		super(mc);
+		this.mc = mc;
 	}
 
 	/**

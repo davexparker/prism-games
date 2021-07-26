@@ -62,15 +62,6 @@ public interface TG<Value> extends LTS<Value>, PlayerInfoOwner, TurnBasedGame
 	 */
 	public BitSet getActiveStates();
 
-	// Attractor
-
-	/**
-	 * Compute the i-attractor of the player (0-indexed).
-	 * @param target Target states
-	 * @param parent a PrismComponent (for obtaining the log)
-	 */
-	public RegionStrategy attractor(int player, BitSet target, prism.PrismComponent parent);
-
 	/**
 	 * Compute the subgame with the given states.
 	 * @param states states

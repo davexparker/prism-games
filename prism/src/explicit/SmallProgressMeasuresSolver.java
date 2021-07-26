@@ -34,7 +34,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 import prism.Pair;
-import prism.PrismComponent;
 
 /**
  * Solve parity games using the small progress measures algorithm.
@@ -51,9 +50,9 @@ public class SmallProgressMeasuresSolver extends PGSolver
 	/**
 	 * Create a new parity game solver.
 	 */
-	public SmallProgressMeasuresSolver(PrismComponent parent)
+	public SmallProgressMeasuresSolver(TGModelChecker mc)
 	{
-		super(parent);
+		super(mc);
 	}
 
 	@Override

@@ -30,8 +30,6 @@ import java.util.BitSet;
 import java.util.Map;
 import java.util.TreeMap;
 
-import prism.PrismComponent;
-
 /**
  * Solve parity games using the Zielonka recursive algorithm.
  */
@@ -41,9 +39,9 @@ public class ZielonkaRecursiveSolver extends PGSolver
 	/**
 	 * Create a new parity game solver.
 	 */
-	public ZielonkaRecursiveSolver(PrismComponent parent)
+	public ZielonkaRecursiveSolver(TGModelChecker mc)
 	{
-		super(parent);
+		super(mc);
 	}
 
 	@Override
@@ -76,7 +74,7 @@ public class ZielonkaRecursiveSolver extends PGSolver
 				tau.put(s, pg.getTG().getSuccessors(s).next());
 			}
 		});
-		RegionStrategy A = pg.getTG().attractor(i, U, parent);
+		RegionStrategy A = mc.computeAttractor(pg.getTG(), i, U);
 		TGSolution W1 = zielonka(pg.difference(A.getRegion()));
 
 		if (W1.get(j).getRegion().isEmpty()) {
@@ -86,7 +84,7 @@ public class ZielonkaRecursiveSolver extends PGSolver
 			W.set(i, W1.get(i));
 			W.set(j, new RegionStrategy());
 		} else {
-			RegionStrategy B = pg.getTG().attractor(j, W1.get(j).getRegion(), parent);
+			RegionStrategy B = mc.computeAttractor(pg.getTG(), j, W1.get(j).getRegion());
 			TGSolution W2 = zielonka(pg.difference(B.getRegion()));
 			W.set(i, W2.get(i));
 			W2.get(j).getRegion().or(B.getRegion());

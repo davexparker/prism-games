@@ -31,7 +31,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 import prism.Pair;
-import prism.PrismComponent;
 
 /**
  * Solve parity games using the priority promotion algorithm.
@@ -42,9 +41,9 @@ public class PriorityPromotionSolver extends PGSolver
 	/**
 	 * Create a new parity game solver.
 	 */
-	public PriorityPromotionSolver(PrismComponent parent)
+	public PriorityPromotionSolver(TGModelChecker mc)
 	{
-		super(parent);
+		super(mc);
 	}
 
 	@Override
@@ -100,7 +99,7 @@ public class PriorityPromotionSolver extends PGSolver
 			.map(Map.Entry::getKey)
 			.forEach(s -> A.set(s));
 
-			RegionStrategy Z = pg.getTG().subgame(Subgame).attractor(alpha, A, parent);
+			RegionStrategy Z = mc.computeAttractor(pg.getTG().subgame(Subgame), alpha, A);
 
 			BitSet Open = Z.getRegion().stream()
 					.filter(s -> pg.getTG().getPlayer(s) == alpha && 
@@ -137,7 +136,7 @@ public class PriorityPromotionSolver extends PGSolver
 				.map(Map.Entry::getKey)
 				.forEach(s -> r.put(s, -1));
 			} else {
-				RegionStrategy Z1 = pg.getTG().attractor(alpha, Z.getRegion(), parent);
+				RegionStrategy Z1 = mc.computeAttractor(pg.getTG(), alpha, Z.getRegion());
 				Z1.getStrategy().putAll(Z.getStrategy());
 				return new Pair<>(alpha, Z1);
 			}
