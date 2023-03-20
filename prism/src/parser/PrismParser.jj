@@ -2115,7 +2115,7 @@ Expression ExpressionStrategy(boolean prop, boolean pathprop) throws PrismLangEx
 	(
 	( expr = ExpressionProb(prop, pathprop) | expr = ExpressionReward(prop, pathprop) | expr = ExpressionMultiNash(prop,pathprop) )
 	{ ret.setSingleOperand(expr); }
-	| expr = ExpressionParenth(prop, pathprop)
+	| expr = ExpressionParenth(prop, true)
 	{ ret.addOperand(expr); }
 	))
 	{

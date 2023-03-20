@@ -633,6 +633,8 @@ public class TypeCheck extends ASTTraverse
 		// Currently, resulting type is always same as first arg
 		if (types[0] instanceof TypeBool)
 			e.setType(TypeBool.getInstance());
+		else if (types[0] instanceof TypePathBool)
+			e.setType(TypeBool.getInstance());
 		else if (types.length == 1 || types[1] instanceof TypeBool) //in this case type[0] is TypeDouble
 			e.setType(TypeDouble.getInstance());
 		else

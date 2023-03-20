@@ -1634,7 +1634,12 @@ public class ModulesFile extends ASTElement implements ModelInfo, RewardGenerato
 		// If unspecified, auto-detect
 		if (modelTypeInFile == null) {
 			boolean isNonProb = isNonProbabilistic();
-			modelType = isNonProb ? ModelType.LTS : ModelType.MDP;
+			boolean game = !players.isEmpty();
+			if (isNonProb) {
+				modelType = game ? ModelType.TG : ModelType.LTS;
+			} else {
+				modelType = game ? ModelType.SMG : ModelType.MDP;
+			}
 		}
 		// Otherwise, it's just whatever was specified
 		else {

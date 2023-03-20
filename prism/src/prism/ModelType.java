@@ -211,6 +211,31 @@ public enum ModelType
 			return DTMC;
 		}
 	},
+	TG("turn-based game") {
+		@Override
+		public boolean multiplePlayers()
+		{
+			return true;
+		}
+		
+		@Override
+		public boolean isProbabilistic()
+		{
+			return false;
+		}
+
+		@Override
+		public String probabilityOrRate()
+		{
+			return NEITHER;
+		}
+
+		@Override
+		public ModelType removeNondeterminism()
+		{
+			return DTMC;
+		}
+	},
 	TPTG("turn-based probabilistic timed game") {
 		@Override
 		public boolean continuousTime()
