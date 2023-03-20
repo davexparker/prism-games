@@ -30,6 +30,8 @@ package explicit;
 import java.util.BitSet;
 import java.util.List;
 
+import acceptance.AcceptanceParity;
+import acceptance.AcceptanceType;
 import parser.ast.Coalition;
 import parser.ast.Expression;
 import parser.ast.ExpressionStrategy;
@@ -108,11 +110,11 @@ public class TGModelChecker extends NonProbModelChecker
 			throw new PrismException("Cannot currently check this strategy formula");
 		}
 		exprSub = ((ExpressionUnaryOp) exprSub).getOperand();
-		// Just assume it is an F for now
-		if (!(exprSub instanceof ExpressionTemporal && ((ExpressionTemporal) exprSub).getOperator() == ExpressionTemporal.P_F)) {
-			throw new PrismException("Cannot currently check this strategy formula");
+		if (exprSub.isSimplePathFormula() && exprSub instanceof ExpressionTemporal && ((ExpressionTemporal) exprSub).getOperator() == ExpressionTemporal.P_F) {
+			return checkReach(model, (ExpressionTemporal) exprSub, coalition, statesOfInterest);
+		} else {
+			return checkLTL(model, (ExpressionTemporal) exprSub, coalition, statesOfInterest);
 		}
-		return checkReach(model, (ExpressionTemporal) exprSub, coalition, statesOfInterest);
 	}
 
 	/**
@@ -126,6 +128,35 @@ public class TGModelChecker extends NonProbModelChecker
 		// Compute/return the result
 		BitSet result = computeReach((TG) model, target, coalition);
 
+		return StateValues.createFromBitSet(result, model);
+	}
+
+	/**
+	 * Model check an LTL formula from inside a <<>> 
+	 */
+	protected StateValues checkLTL(Model model, ExpressionTemporal expr, Coalition coalition, BitSet statesOfInterest) throws PrismException
+	{
+		// For LTL model checking routines
+		LTLModelChecker mcLtl = new LTLModelChecker(this);
+
+		// Build product of TG and automaton
+		AcceptanceType[] allowedAcceptance = { AcceptanceType.PARITY };
+		LTLModelChecker.LTLProduct<TG<Double>> product = mcLtl.constructProductTG(this, (TG) model, expr, statesOfInterest, allowedAcceptance);
+		
+		// Get list of priorities for all states in product
+		AcceptanceParity accPar = (AcceptanceParity) product.getAcceptance();
+		List<Integer> priorities = accPar.getPriorities(product.getProductModel().getNumStates());
+		// Replace unknown priorities and convert all to max-even if needed
+		AcceptanceParity.replaceMissingPriorities(priorities, accPar.getObjective());
+		AcceptanceParity.convertPrioritiesToEven(priorities, accPar.getParity());
+		AcceptanceParity.convertPrioritiesToMax(priorities, accPar.getObjective());
+		//mainLog.println(priorities);
+		
+		// Solve parity objective on product
+		TGModelChecker mcProduct = new TGModelChecker(this);
+		mcProduct.inheritSettings(this);
+		BitSet result = mcProduct.computeParity((TG) product.getProductModel(), priorities, coalition);
+		
 		return StateValues.createFromBitSet(result, model);
 	}
 

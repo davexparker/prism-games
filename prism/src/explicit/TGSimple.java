@@ -262,21 +262,21 @@ public class TGSimple<Value> extends LTSSimple<Value> implements TG<Value>
 	}
 
 	@Override
-	public TG subgame(BitSet states)
+	public TG<Value> subgame(BitSet states)
 	{
 		return subgameByStateFilter(s -> states.get(s));
 	}
 
 	@Override
-	public TG difference(BitSet states)
+	public TG<Value> difference(BitSet states)
 	{
 		return subgameByStateFilter(s -> !states.get(s));
 	}
 
 	// Construct the subgame with a given filter of states
-	private TG subgameByStateFilter(Predicate<Integer> pred)
+	private TG<Value> subgameByStateFilter(Predicate<Integer> pred)
 	{
-		TGSimple tg = new TGSimple(numStates);
+		TGSimple<Value> tg = new TGSimple<>(numStates);
 
 		activeStates.stream().forEach(s -> {
 			if (pred.test(s)) {
@@ -298,9 +298,9 @@ public class TGSimple<Value> extends LTSSimple<Value> implements TG<Value>
 	}
 
 	@Override
-	public Iterator<Entry<Integer, Double>> getTransitionsIterator(int s, int i)
+	public Iterator<Entry<Integer, Value>> getTransitionsIterator(int s, int i)
 	{
-		return Collections.singletonMap(trans.get(s).get(i), 1D).entrySet().iterator();
+		Value one = getEvaluator().one();
+		return Collections.singletonMap(trans.get(s).get(i), one).entrySet().iterator();
 	}
-
 }

@@ -227,14 +227,14 @@ public class LTLModelChecker extends PrismComponent
 	 * (L0, L1, etc.) which become the atomic propositions in the resulting DA. BitSets giving the states which
 	 * satisfy each label are put into the vector {@code labelBS}, which should be empty when this function is called.
 	 *
-	 * @param mc a ProbModelChecker, used for checking maximal state formulas
+	 * @param mc a StateModelChecker, used for checking maximal state formulas
 	 * @param model the model
 	 * @param expr a path expression, i.e. the LTL formula
 	 * @param labelBS empty vector to be filled with BitSets for subformulas 
 	 * @param allowedAcceptance the allowed acceptance types
 	 * @return the DA
 	 */
-	public DA<BitSet,? extends AcceptanceOmega> constructDAForLTLFormula(ProbModelChecker mc, Model<?> model, Expression expr, Vector<BitSet> labelBS, AcceptanceType... allowedAcceptance) throws PrismException
+	public DA<BitSet,? extends AcceptanceOmega> constructDAForLTLFormula(StateModelChecker mc, Model<?> model, Expression expr, Vector<BitSet> labelBS, AcceptanceType... allowedAcceptance) throws PrismException
 	{
 		Expression ltl;
 		DA<BitSet,? extends AcceptanceOmega> da;
@@ -450,6 +450,23 @@ public class LTLModelChecker extends PrismComponent
 	}
 
 	/**
+	 * Generate a deterministic automaton for the given LTL formula
+	 * and construct the product of this automaton with a TG.
+	 *
+	 * @param mc a TGModelChecker, used for checking maximal state formulas
+	 * @param model the model
+	 * @param expr a path expression
+	 * @param statesOfInterest the set of states for which values should be calculated (null = all states)
+	 * @param allowedAcceptance the allowed acceptance conditions
+	 * @return the product with the DA
+	 * @throws PrismException
+	 */
+	public <Value> LTLProduct<TG<Value>> constructProductTG(StateModelChecker mc, TG<Value> model, Expression expr, BitSet statesOfInterest, AcceptanceType... allowedAcceptance) throws PrismException
+	{
+		return constructDAProductForLTLFormula(mc, model, expr, statesOfInterest, allowedAcceptance);
+	}
+
+	/**
 	 * Generate a deterministic automaton (DA) for the given LTL formula, having first extracted maximal state formulas
 	 * and model checked them with the passed in model and model checker (see {@link #constructDAForLTLFormula}.
 	 * Then construct the product of this automaton with the model.
@@ -462,7 +479,7 @@ public class LTLModelChecker extends PrismComponent
 	 * @return the product with the DA
 	 * @throws PrismException
 	 */
-	public <Value,M extends Model<Value>> LTLProduct<M> constructDAProductForLTLFormula(ProbModelChecker mc, M model, Expression expr, BitSet statesOfInterest, AcceptanceType... allowedAcceptance) throws PrismException
+	public <Value,M extends Model<Value>> LTLProduct<M> constructDAProductForLTLFormula(StateModelChecker mc, M model, Expression expr, BitSet statesOfInterest, AcceptanceType... allowedAcceptance) throws PrismException
 	{
 		// Convert LTL formula to automaton
 		Vector<BitSet> labelBS = new Vector<BitSet>();
@@ -579,6 +596,9 @@ public class LTLModelChecker extends PrismComponent
 			if (modelType == ModelType.CSG) {
 				((CSGSimple<Value>) prodModel).copyPlayerInfo((PlayerInfoOwner) model);
 			}
+			if (modelType == ModelType.TG) {
+				((TGSimple<Value>) prodModel).copyPlayerInfo((PlayerInfoOwner) model);
+			}
 		}
 
 		// Add more player information for CSGs
@@ -598,7 +618,7 @@ public class LTLModelChecker extends PrismComponent
 		// Now do the actual product model construction
 		return doConstructProductModel(modelType, prodModel, da, model, labelBS, statesOfInterest);
 	}
-	
+
 	/**
 	 * Do the main part of the construction of the product of a DA and a model,
 	 * inserting states and transitions into the provided ModelSimple object.
@@ -626,7 +646,7 @@ public class LTLModelChecker extends PrismComponent
 		} catch (ArithmeticException e) {
 			throw new PrismException("Size of product state space of model and automaton is too large for explicit engine");
 		}
-		
+
 		// Encoding: 
 		// each state s' = <s, q> = s * daSize + q
 		// s(s') = s' / daSize
@@ -669,6 +689,9 @@ public class LTLModelChecker extends PrismComponent
 						break;
 					case SMG:
 						((SMGSimple<Value>) prodModel).addState(((SMG<Value>) model).getPlayer(s_2));
+						break;
+					case TG:
+						((TGSimple<Value>) prodModel).addState(((TG<Value>) model).getPlayer(s_2));
 						break;
 					default:
 						prodModel.addState();
@@ -733,6 +756,9 @@ public class LTLModelChecker extends PrismComponent
 				case CSG:
 					iter = ((CSG<Value>) model).getTransitionsIterator(s_1, j);
 					break;
+				case TG:
+					iter = ((TG<Value>) model).getTransitionsIterator(s_1, j);
+					break;
 				default:
 					throw new PrismNotSupportedException("Product construction not implemented for " + modelType + "s");
 				}
@@ -762,6 +788,7 @@ public class LTLModelChecker extends PrismComponent
 							case STPG:
 							case SMG:
 							case CSG:
+							case TG:
 								prodDistr.set(map_2, prob);
 								break;
 							default:
@@ -807,11 +834,14 @@ public class LTLModelChecker extends PrismComponent
 					int t_2 = ((CSGSimple<Value>) prodModel).addActionLabelledChoice(map_1, prodDistr, ((CSG) model).getAction(s_1, j));
 					((CSGSimple<Value>) prodModel).setIndexes(map_1, t_2, ((CSG<Value>) model).getIndexes(s_1, j));
 					break;
+				case TG:
+					((TGSimple<Value>) prodModel).addActionLabelledTransition(map_1, prodDistr.sampleFromDistribution(), ((TG<Value>) model).getAction(s_1, j));
+					break;
 				default:
 					break;
 				}
 			}
-			
+
 			// For partially observable models, transfer observation info
 			// (do it after transitions are added, since observation actions are checked)
 			if (modelType == ModelType.POMDP) {

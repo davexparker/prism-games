@@ -75,17 +75,17 @@ public interface TG<Value> extends LTS<Value>, PlayerInfoOwner, TurnBasedGame
 	 * Compute the subgame with the given states.
 	 * @param states states
 	 */
-	public TG subgame(BitSet states);
+	public TG<Value> subgame(BitSet states);
 
 	/**
 	 * Compute the subgame without the given states.
 	 * @param states states
 	 */
-	public TG difference(BitSet states);
+	public TG<Value> difference(BitSet states);
 
 	/**
 	 * Get an iterator over the transitions from choice {@code i} of state {@code s}.
 	 */
-	public Iterator<Entry<Integer, Double>> getTransitionsIterator(int s, int i);
+	public Iterator<Entry<Integer, Value>> getTransitionsIterator(int s, int i);
 
 }
