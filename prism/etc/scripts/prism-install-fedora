@@ -18,4 +18,4 @@ git clone https://github.com/prismmodelchecker/prism-games.git
 
 # Compile PRISM-games and run a few tests
 # (each should display: "Testing result: PASS")
-(cd prism-games/prism && make && make test testz3)
+(cd prism-games/prism && make && make test testyices testz3 testppl)
