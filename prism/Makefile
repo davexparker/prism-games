@@ -747,7 +747,7 @@ clean_ext:
 	@(for ext in $(EXT_PACKAGES); do \
 	  echo Cleaning $$ext ...; \
 	  (cd ext/$$ext && \
-	  $(MAKE) -s clean) \
+	  $(MAKE) -s OSTYPE="$(OSTYPE)" ARCH="$(ARCH)" clean) \
 	  || exit 1; \
 	done )
 
