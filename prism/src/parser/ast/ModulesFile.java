@@ -1646,6 +1646,8 @@ public class ModulesFile extends ASTElement implements ModelInfo, RewardGenerato
 				modelType = ModelType.POMDP;
 			} else if (modelType == ModelType.PTA) {
 				modelType = ModelType.POPTA;
+			} else if (modelType == ModelType.SMG) {
+				modelType = ModelType.POSMG;
 			}
 		}
 		if (isInterval) {

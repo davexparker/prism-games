@@ -1994,6 +1994,7 @@ public class Prism extends PrismComponent implements PrismSettingsListener
 			case CSG:
 			case SMG:
 			case STPG:
+			case POSMG:
 			case CTMDP:
 				if (getCurrentEngine() == PrismEngine.SYMBOLIC && !(currentModelType == ModelType.SMG && getEngine() == MTBDD)) {
 					mainLog.println("\nSwitching to explicit engine, which supports " + currentModelType + "s...");

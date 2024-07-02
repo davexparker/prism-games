@@ -172,6 +172,25 @@ public enum ModelType
 			return DTMC;
 		}
 	},
+	POSMG("partially observable stochastic multi-player game") {
+		@Override
+		public boolean multiplePlayers()
+		{
+			return true;
+		}
+
+		@Override
+		public boolean partiallyObservable()
+		{
+			return true;
+		}
+
+		@Override
+		public ModelType removeNondeterminism()
+		{
+			return DTMC;
+		}
+	},
 	PTA("probabilistic timed automaton") {
 		@Override
 		public boolean continuousTime()

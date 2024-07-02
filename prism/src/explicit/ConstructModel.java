@@ -179,6 +179,7 @@ public class ConstructModel extends PrismComponent
 		STPGSimple<Value> stpg = null;
 		CSGSimple<Value> csg = null;
 		SMGSimple<Value> smg = null;
+		POSMGSimple<Value> posmg = null;
 		IDTMCSimple<Value> idtmc = null;
 		IMDPSimple<Value> imdp = null;
 		LTSSimple<Value> lts = null;
@@ -264,6 +265,9 @@ public class ConstructModel extends PrismComponent
 			case SMG:
 				modelSimple = smg = new SMGSimple<>();
 				break;
+			case POSMG:
+				modelSimple = posmg = new POSMGSimple<>();
+				break;
 			case PTA:
 			case POPTA:
 				throw new PrismNotSupportedException("Model construction not supported for " + modelType + "s");
@@ -311,6 +315,8 @@ public class ConstructModel extends PrismComponent
 					stpg.setPlayer(src, player);
 				} else if (modelType == ModelType.SMG) {
 					smg.setPlayer(src, player);
+				} else if (modelType == ModelType.POSMG) {
+					posmg.setPlayer(src, player);
 				}
 			}
 			// Look at each outgoing choice in turn
@@ -365,6 +371,7 @@ public class ConstructModel extends PrismComponent
 						case STPG:
 						case SMG:
 						case CSG:
+						case POSMG:
 							distr.add(dest, modelGen.getTransitionProbability(i, j));
 							break;
 						case IMDP:
@@ -420,6 +427,13 @@ public class ConstructModel extends PrismComponent
 						} else {
 							smg.addChoice(src, distr);
 						}
+					}
+					else if (modelType == ModelType.POSMG) {
+						if (distinguishActions) {
+							posmg.addActionLabelledChoice(src, distr, modelGen.getTransitionAction(i, 0));
+						} else {
+							posmg.addChoice(src, distr);
+						}
 					} else if (modelType == ModelType.IMDP) {
 						if (distinguishActions) {
 							ch = imdp.addActionLabelledChoice(src, distrUnc, modelGen.getChoiceAction(i));
@@ -437,8 +451,8 @@ public class ConstructModel extends PrismComponent
 			}
 			// For partially observable models, add observation info to state
 			// (do it after transitions are added, since observation actions are checked)
-			if (!justReach && modelType == ModelType.POMDP) {
-				setStateObservation(modelGen, (POMDPSimple<Value>) modelSimple, src, state);
+			if (!justReach && modelType.partiallyObservable()) {
+				setStateObservation(modelGen, (ModelSimple<Value>) modelSimple, src, state);
 			}
 			// Print some progress info occasionally
 			progress.updateIfReady(src + 1);
@@ -522,6 +536,9 @@ public class ConstructModel extends PrismComponent
 			case SMG:
 				model = sortStates ? new SMGSimple<>(smg, permut) : smg;
 				break;
+			case POSMG:
+				model = sortStates ? new POSMGSimple<>(posmg, permut) : posmg;
+				break;
 			case IDTMC:
 				model = (ModelExplicit<Value>) (sortStates ? new IDTMCSimple<>(idtmc, permut) : idtmc);
 				break;
@@ -552,7 +569,7 @@ public class ConstructModel extends PrismComponent
 		return model;
 	}
 
-	private <Value> void setStateObservation(ModelGenerator<Value> modelGen, POMDPSimple<Value> pomdp, int s, State state) throws PrismException
+	private <Value> void setStateObservation(ModelGenerator<Value> modelGen, ModelSimple<Value> model, int s, State state) throws PrismException
 	{
 		// Get observation for the current state
 		// An observation is a State containing the value for each observable
@@ -570,7 +587,13 @@ public class ConstructModel extends PrismComponent
 			}
 		}
 		// Set observation/unobservation
-		pomdp.setObservation(s, sObs, sUnobs, modelGen.getObservableNames());
+		if (model.getModelType() == ModelType.POMDP) {
+			((POMDPSimple<Value>) model).setObservation(s, sObs, sUnobs, modelGen.getObservableNames());
+		} else if (model.getModelType() == ModelType.POSMG) {
+			((POSMGSimple<Value>) model).setObservation(s, sObs, sUnobs, modelGen.getObservableNames());
+		} else {
+			throw new PrismException("Unknown partially observable model type " + model.getModelType());
+		}
 	}
 	
 	private <Value> void attachLabels(ModelGenerator<Value> modelGen, ModelExplicit<Value> model) throws PrismException

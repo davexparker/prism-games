@@ -442,6 +442,7 @@ public class SimulatorEngine extends PrismComponent
 		case STPG:
 		case SMG:
 		case CSG:
+		case POSMG:
 			// Pick choice (from strategy or randomly) and random transition
 			i = getAutomaticChoiceIndex();
 			d = rng.randomUnifDouble();
