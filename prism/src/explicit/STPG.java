@@ -35,6 +35,7 @@ import java.util.Map.Entry;
 import explicit.graphviz.StateOwnerDecorator;
 import explicit.rewards.STPGRewards;
 import prism.ModelType;
+import prism.PlayerInfoOwner;
 import prism.PrismException;
 import prism.PrismLog;
 import prism.PrismUtils;
@@ -46,7 +47,7 @@ import prism.PrismUtils;
  * Probabilistic states do not need to be stored explicitly; instead, like in an MDP,
  * players have several 'choices', each of which is a probability distribution over successor states.
  */
-public interface STPG<Value> extends MDP<Value>
+public interface STPG<Value> extends MDP<Value>, TurnBasedGame
 {
 	// Accessors (for Model) - default implementations
 	
@@ -57,34 +58,12 @@ public interface STPG<Value> extends MDP<Value>
 	}
 
 	@Override
-	default void exportToDotFile(PrismLog out, Iterable<explicit.graphviz.Decorator> decorators, int precision)
-	{
-		// Copy any existing decorators
-		List<explicit.graphviz.Decorator> decoratorsNew = new ArrayList<>();
-		if (decorators != null) {
-			for (explicit.graphviz.Decorator decorator : decorators) {
-				decoratorsNew.add(decorator);
-			}
-		}
-		// And add a new one that draws states according to player owner
-		decoratorsNew.add(new StateOwnerDecorator(this::getPlayer));
-		MDP.super.exportToDotFile(out, decoratorsNew, precision);
-	}
-	
-	@Override
 	default void exportToPrismLanguage(final String filename, int precision) throws PrismException
 	{
 		throw new UnsupportedOperationException();
 	}
 	
 	// Accessors
-	
-	/**
-	 * Get the player that owns state {@code s}.
-	 * Returns the index of the player (0-indexed).
-	 * @param s Index of state (0-indexed)
-	 */
-	public int getPlayer(int s);
 	
 	/**
 	 * Perform a single step of precomputation algorithm Prob0, i.e., for states i in {@code subset},
