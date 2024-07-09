@@ -30,6 +30,7 @@ import explicit.CTMC;
 import explicit.Model;
 import explicit.NondetModel;
 import explicit.PartiallyObservableModel;
+import explicit.TurnBasedGame;
 import explicit.rewards.Rewards;
 import prism.Evaluator;
 import prism.ModelType;
@@ -108,6 +109,9 @@ public class DRNExporter<Value> extends ModelExporter<Value>
 			out.print("state " + s);
 			if (modelType.partiallyObservable()) {
 				out.print(" {" + ((PartiallyObservableModel<Value>) model).getObservation(s) +"}");
+			}
+			if (modelType.multiplePlayers() && !modelType.concurrent()) {
+				out.print(" <" + ((TurnBasedGame) model).getPlayer(s) + ">");
 			}
 			if (modelType.continuousTime()) {
 				out.print(" !" + ((CTMC<Value>) model).getExitRate(s));
