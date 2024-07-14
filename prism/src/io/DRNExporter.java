@@ -31,27 +31,16 @@ import explicit.Model;
 import explicit.NondetModel;
 import explicit.PartiallyObservableModel;
 import explicit.TurnBasedGame;
-import explicit.rewards.MCRewards;
-import explicit.rewards.MDPRewards;
 import explicit.rewards.Rewards;
-import io.Exporter;
-import io.ModelExportOptions;
-import io.Transition;
 import prism.Evaluator;
 import prism.ModelType;
-import prism.Pair;
 import prism.PrismException;
 import prism.PrismLog;
 import prism.RewardGenerator;
 
-import java.util.ArrayList;
 import java.util.BitSet;
-import java.util.Iterator;
+import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.TreeSet;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -72,8 +61,11 @@ public class DRNExporter<Value> extends Exporter<Value>
 	/**
 	 * Export a model.
 	 * @param model The model
+	 * @param rewardGen The RewardGenerator for reward info
+	 * @param allRewards All the rewards
+	 * @param labelNames The names of the labels to export
+	 * @param labelStates The states that satisfy each label, specified as a BitSet
 	 * @param out Where to export
-	 * @param exportOptions The options for export
 	 */
 	public void exportModel(Model<Value> model, RewardGenerator<Value> rewardGen, List<Rewards<Value>> allRewards, List<String> labelNames, List<BitSet> labelStates, PrismLog out) throws PrismException
 	{
@@ -98,7 +90,8 @@ public class DRNExporter<Value> extends Exporter<Value>
 
 		// Output reward structure info
 		out.println("@reward_models");
-		out.println(String.join(" ", rewardGen.getRewardStructNames().reversed()));
+		//out.println(String.join(" ", rewardGen.getRewardStructNames().reversed()));
+		out.println(rewardGen.getRewardStructNames().stream().sorted(Collections.reverseOrder()).collect(Collectors.joining(" ")));
 
 		// Output model stats
 		out.println("@nr_states");
@@ -119,7 +112,7 @@ public class DRNExporter<Value> extends Exporter<Value>
 			// Output state info
 			out.print("state " + s);
 			if (modelType.partiallyObservable()) {
-				out.print(" {" + ((PartiallyObservableModel) model).getObservation(s) +"}");
+				out.print(" {" + ((PartiallyObservableModel<Value>) model).getObservation(s) +"}");
 			}
 			if (modelType.multiplePlayers() && !modelType.concurrent()) {
 				out.print(" <" + ((TurnBasedGame) model).getPlayer(s) + ">");
@@ -145,7 +138,7 @@ public class DRNExporter<Value> extends Exporter<Value>
 			for (int j = 0; j < numChoices; j++) {
 				out.print("\taction ");
 				if (modelType.nondeterministic() && showActions) {
-					Object action = ((NondetModel) model).getAction(s, j);
+					Object action = ((NondetModel<Value>) model).getAction(s, j);
 					out.print(action != null ? action : "__NOLABEL__");
 				} else {
 					out.print(j);
@@ -153,7 +146,7 @@ public class DRNExporter<Value> extends Exporter<Value>
 				out.println(" " + getTransitionRewardTuple(allRewards, s, j).toStringReversed(e -> formatValue(e, evalRewards), ", "));
 				// Print out (sorted) transitions
 				for (Transition<Value> transition : getSortedTransitionsIterator(model, s, j, showActions)) {
-					out.println("\t\t" + transition.target + " : " + formatValue(transition.probability));
+					out.println("\t\t" + transition.target + " : " + formatValue(transition.value));
 				}
 			}
 		}
