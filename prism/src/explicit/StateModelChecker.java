@@ -27,10 +27,7 @@
 
 package explicit;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashMap;
@@ -41,14 +38,13 @@ import java.util.TreeSet;
 import java.util.Vector;
 
 import explicit.rewards.ConstructRewards;
-import explicit.rewards.MCRewards;
-import explicit.rewards.MDPRewards;
 import explicit.rewards.Rewards;
 import io.DotExporter;
 import io.DRNExporter;
 import io.MatlabExporter;
 import io.ModelExportOptions;
 import io.PrismExplicitExporter;
+import io.PrismExplicitImporter;
 import parser.EvaluateContext.EvalMode;
 import parser.State;
 import parser.Values;
@@ -646,7 +642,7 @@ public class StateModelChecker extends PrismComponent
 	public StateValues checkExpression(Model<?> model, Expression expr, BitSet statesOfInterest) throws PrismException
 	{
 		StateValues res = null;
-		
+
 		// If-then-else
 		if (expr instanceof ExpressionITE) {
 			res = checkExpressionITE(model, (ExpressionITE) expr, statesOfInterest);
@@ -1528,78 +1524,37 @@ public class StateModelChecker extends PrismComponent
 	}
 
 	/**
-	 * Loads labels from a PRISM labels file and stores them in BitSet objects.
-	 * (Actually, it returns a map from label name Strings to BitSets.)
-	 * (Note: the size of the BitSet may be smaller than the number of states.) 
+	 * Construct expected rewards for the reward structure with index r of the reward generator and a model,
+	 * i.e., using probability-weighted sum for any rewards attached to transitions,
+	 * assigning them to states/choices.
+	 * Ensures non-negative rewards.
+	 * <br>
+	 * Note: Relies on the stored RewardGenerator for constructing the reward structure.
+	 */
+	protected <Value> Rewards<Value> constructExpectedRewards(Model<Value> model, int r) throws PrismException
+	{
+		if (model.getModelType() == ModelType.IDTMC && rewardGen.rewardStructHasTransitionRewards(r)) {
+			throw new PrismNotSupportedException("Transition rewards not supported for " + model.getModelType() + "s");
+
+		}
+		ConstructRewards constructRewards = new ConstructRewards(this);
+		constructRewards.setExpectedRewards(true);
+		if (model.getModelType() == ModelType.CSG) {
+			constructRewards.allowNegativeRewards();
+		}
+		return constructRewards.buildRewardStructure(model, (RewardGenerator<Value>) rewardGen, r);
+	}
+
+	/**
+	 * Load all labels from a PRISM labels (.lab) file and store them in BitSet objects.
+	 * Return a map from label name Strings to BitSets.
+	 * This is for all labels in the file, including "init", "deadlock".
+	 * Note: the size of the BitSet may be smaller than the number of states.
 	 */
 	public static Map<String, BitSet> loadLabelsFile(String filename) throws PrismException
 	{
-		ArrayList<String> labels;
-		BitSet bitsets[];
-		Map<String, BitSet> res;
-		String s, ss[];
-		int i, j, k;
-
-		// open file for reading, automatic close when done
-		try (BufferedReader in = new BufferedReader(new FileReader(new File(filename)))) {
-			// Parse first line to get label list
-			s = in.readLine();
-			if (s == null) {
-				in.close();
-				throw new PrismException("Empty labels file");
-			}
-			ss = s.split(" ");
-			labels = new ArrayList<String>(ss.length);
-			for (i = 0; i < ss.length; i++) {
-				s = ss[i];
-				j = s.indexOf('=');
-				if (j < 0) {
-					in.close();
-					throw new PrismException("Corrupt labels file (line 1)");
-				}
-				k = Integer.parseInt(s.substring(0, j));
-				while (labels.size() <= k)
-					labels.add("?");
-				labels.set(k, s.substring(j + 2, s.length() - 1));
-			}
-			// Build list of bitsets
-			bitsets = new BitSet[labels.size()];
-			for (i = 0; i < bitsets.length; i++)
-				bitsets[i] = new BitSet();
-			// Parse remaining lines
-			s = in.readLine();
-			while (s != null) {
-				// Skip blank lines
-				s = s.trim();
-				if (s.length() > 0) {
-					// Split line
-					ss = s.split(":");
-					i = Integer.parseInt(ss[0].trim());
-					ss = ss[1].trim().split(" ");
-					for (j = 0; j < ss.length; j++) {
-						if (ss[j].length() == 0)
-							continue;
-						k = Integer.parseInt(ss[j]);
-						// Store label info
-						bitsets[k].set(i);
-					}
-				}
-				// Prepare for next iter
-				s = in.readLine();
-			}
-			// Build BitSet map
-			res = new HashMap<String, BitSet>();
-			for (i = 0; i < labels.size(); i++) {
-				if (!labels.get(i).equals("?")) {
-					res.put(labels.get(i), bitsets[i]);
-				}
-			}
-			return res;
-		} catch (IOException e) {
-			throw new PrismException("Error reading labels file \"" + filename + "\"");
-		} catch (NumberFormatException e) {
-			throw new PrismException("Error in labels file");
-		}
+		PrismExplicitImporter modelImporter = new PrismExplicitImporter(null, null, new File(filename), null, null, null);
+		return modelImporter.extractAllLabels();
 	}
 
 	/**
@@ -1657,24 +1612,8 @@ public class StateModelChecker extends PrismComponent
 		}
 
 		Rewards<Value> modelRewards = constructRewards(model, r);
-		PrismExplicitExporter exporter = new PrismExplicitExporter(exportOptions);
-		switch (model.getModelType()) {
-			case DTMC:
-			case CTMC:
-			case IDTMC:
-				exporter.exportMCStateRewards(model, (MCRewards<Value>) modelRewards, rewardGen.getRewardStructName(r), out);
-				break;
-			case MDP:
-			case POMDP:
-			case STPG:
-			case IMDP:
-			case SMG:
-			case CSG:
-				exporter.exportMDPStateRewards(model, (MDPRewards<Value>) modelRewards, rewardGen.getRewardStructName(r), out);
-				break;
-			default:
-				throw new PrismNotSupportedException("Explicit engine does not yet export state rewards for " + model.getModelType() + "s");
-		}
+		PrismExplicitExporter<Value> exporter = new PrismExplicitExporter<>(exportOptions);
+		exporter.exportStateRewards(model, modelRewards, rewardGen.getRewardStructName(r), out);
 	}
 
 	/**
@@ -1691,19 +1630,8 @@ public class StateModelChecker extends PrismComponent
 		}
 
 		Rewards<Value> modelRewards = constructRewards(model, r);
-		PrismExplicitExporter exporter = new PrismExplicitExporter(exportOptions);
-		switch (model.getModelType()) {
-			case MDP:
-			case POMDP:
-			case STPG:
-			case IMDP:
-			case SMG:
-			case CSG:
-				exporter.exportMDPTransRewards((NondetModel<Value>) model, (MDPRewards<Value>) modelRewards, rewardGen.getRewardStructName(r), out);
-				break;
-			default:
-				throw new PrismNotSupportedException("Explicit engine does not yet export transition rewards for " + model.getModelType() + "s");
-		}
+		PrismExplicitExporter<Value> exporter = new PrismExplicitExporter<>(exportOptions);
+		exporter.exportTransRewards(model, modelRewards, rewardGen.getRewardStructName(r), out);
 	}
 
 	/**
