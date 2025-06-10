@@ -317,6 +317,9 @@ public class ModulesFileModelGenerator<Value> implements ModelGenerator<Value>, 
 			transitionList = new TransitionList<Value>(eval);
 		} else {
 			updaterInt = new Updater<Interval<Value>>(modulesFile, varList, evalInt, parent);
+			if (modelType == ModelType.ICSG) {
+				updaterInt.initialiseCSG();
+			}
 			transitionListInt = new TransitionList<Interval<Value>>(evalInt);
 		}
 		transitionListBuilt = false;
@@ -658,9 +661,9 @@ public class ModulesFileModelGenerator<Value> implements ModelGenerator<Value>, 
 	}
 
 	@Override
-	public int[] getTransitionIndexes(int i)
+	public int[] getTransitionIndexes(int i) throws PrismException
 	{
-		return transitionList.getTransitionActionIndexes(i);
+		return getTransitionList().getTransitionActionIndexes(i);
 	}
 
 	/**
@@ -869,7 +872,7 @@ public class ModulesFileModelGenerator<Value> implements ModelGenerator<Value>, 
 							throw new PrismLangException("Reward structure is not finite at state " + state, rewStr.getReward(i));
 						}
                         // For now, disable negative reward check for CSGs
-                        if (modelType != ModelType.CSG) {
+                        if (!(modelType == ModelType.CSG || modelType == ModelType.ICSG)) {
                             if (!allowNegative && !eval.geq(rew, eval.zero())) {
                                 throw new PrismLangException("Reward structure is negative (" + rew + ") at state " + state, originalModulesFile.getRewardStruct(r).getReward(i));
                             }
@@ -888,7 +891,7 @@ public class ModulesFileModelGenerator<Value> implements ModelGenerator<Value>, 
 		RewardStruct rewStr = modulesFile.getRewardStruct(r);
 		int n = rewStr.getNumItems();
 		Value d = eval.zero();
-		if (modelType != ModelType.CSG) {
+		if (!(modelType == ModelType.CSG || modelType == ModelType.ICSG)) {
 			for (int i = 0; i < n; i++) {
 				if (rewStr.getRewardStructItem(i).isTransitionReward()) {
 					Expression guard = rewStr.getStates(i);
@@ -999,7 +1002,11 @@ public class ModulesFileModelGenerator<Value> implements ModelGenerator<Value>, 
 		}
 		// Compute the current transition list, if required
 		if (!transitionListIntBuilt) {
-			updaterInt.calculateTransitions(exploreState, transitionListInt);
+			if (modelType == ModelType.ICSG) {
+				updaterInt.calculateTransitionsCSG(exploreState, transitionListInt);
+			} else {
+				updaterInt.calculateTransitions(exploreState, transitionListInt);
+			}
 			transitionListIntBuilt = true;
 		}
 		return transitionListInt;

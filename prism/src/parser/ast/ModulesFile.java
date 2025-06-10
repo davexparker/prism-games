@@ -1665,6 +1665,8 @@ public class ModulesFile extends ASTElement implements ModelInfo, RewardGenerato
 				modelType = ModelType.IMDP;
 			} else if (modelType == ModelType.POMDP) {
 				modelType = ModelType.IPOMDP;
+			} else if (modelType == ModelType.CSG) {
+				modelType = ModelType.ICSG;
 			} else {
 				throw new PrismLangException("Intervals only allowed in DTMCs and MDPs currently");
 			}

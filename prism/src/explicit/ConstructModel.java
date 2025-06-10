@@ -182,6 +182,7 @@ public class ConstructModel extends PrismComponent
 		IDTMCSimple<Value> idtmc = null;
 		IMDPSimple<Value> imdp = null;
 		IPOMDPSimple<Value> ipomdp = null;
+		ICSGSimple<Value> icsg = null;
 		LTSSimple<Value> lts = null;
 		Distribution<Value> distr = null;
 		Distribution<Interval<Value>> distrUnc = null;
@@ -257,6 +258,9 @@ public class ConstructModel extends PrismComponent
 				break;
 			case IPOMDP:
 				modelSimple = ipomdp = new IPOMDPSimple<>();
+				break;
+			case ICSG:
+				modelSimple = icsg = new ICSGSimple<>();
 				break;
 			case LTS:
 				modelSimple = lts = new LTSSimple<>();
@@ -381,6 +385,7 @@ public class ConstructModel extends PrismComponent
 							break;
 						case IMDP:
 						case IPOMDP:
+						case ICSG:
 							distrUnc.add(dest, modelGen.getTransitionProbabilityInterval(i, j));
 							break;
 						case LTS:
@@ -445,6 +450,9 @@ public class ConstructModel extends PrismComponent
 						} else {
 							ch = ipomdp.addChoice(src, distrUnc);
 						}
+					} else if (modelType == ModelType.ICSG) {
+						// Action labels required for ICSGs
+						ch = icsg.addActionLabelledChoice(src, distrUnc, modelGen.getTransitionIndexes(i));
 					}
 				}
 				// For interval models, we delimit the constructed distributions
@@ -454,6 +462,8 @@ public class ConstructModel extends PrismComponent
 					imdp.delimit(src, ch);
 				} else if (modelType == ModelType.IPOMDP) {
 					ipomdp.delimit(src, ch);
+				} else if (modelType == ModelType.ICSG) {
+					icsg.delimit(src, ch);
 				}
 			}
 			// For partially observable models, add observation info to state
@@ -477,19 +487,28 @@ public class ConstructModel extends PrismComponent
 		// Add idle actions
 		if (modelType == ModelType.CSG)
 			csg.addIdleIndexes();
+		else if (modelType == ModelType.ICSG)
+			icsg.addIdleIndexes();
 
 		// Find/fix deadlocks (if required)
 		if (!justReach && findDeadlocks) {
-			if (modelType != ModelType.CSG) {
+			if (modelType != ModelType.CSG && modelType != ModelType.ICSG) {
 				modelSimple.findDeadlocks(fixDeadlocks);
 			}
 			else {
 				modelSimple.findDeadlocks(false);
 				// Fixes deadlocks for concurrent games...this may have to be changed though
 				if(modelSimple.getNumDeadlockStates() > 0) {
-					for(Integer s : modelSimple.getDeadlockStates()) {
-						csg.fixDeadlock(s);
-					}			
+					if (modelType == ModelType.CSG) {
+						for(Integer s : modelSimple.getDeadlockStates()) {
+							csg.fixDeadlock(s);
+						}
+					} else { // modelType == ModelType.ICSG
+						for(Integer s : modelSimple.getDeadlockStates()) {
+							icsg.fixDeadlock(s);
+						}
+
+					}
 				}
 			}
 		}
@@ -555,6 +574,9 @@ public class ConstructModel extends PrismComponent
 				break;
 			case IPOMDP:
 				model = sortStates ? new IPOMDPSimple<>(ipomdp, permut) : ipomdp;
+				break;
+			case ICSG:
+				model = sortStates ? new ICSGSimple<>(icsg, permut) : icsg;
 				break;
 			case LTS:
 				model = sortStates ? new LTSSimple<>(lts, permut) : lts;
