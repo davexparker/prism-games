@@ -627,14 +627,15 @@ public class ProbModelChecker extends NonProbModelChecker
 			throw new PrismNotSupportedException("The " + expr.getOperatorString() + " operator is not yet supported");
 
 		// Only support <<>> for MDPs/SMGs right now
-		if (!(this instanceof MDPModelChecker || this instanceof SMGModelChecker || this instanceof CSGModelChecker))
-			throw new PrismNotSupportedException("The " + expr.getOperatorString() + " operator is only supported for MDPs and SMGs currently");
+		// TODO: check if support for CSGs & ICSGs (and use ICSGModelChecker or UCSGModelChecker)
+		if (!(this instanceof MDPModelChecker || this instanceof SMGModelChecker || this instanceof CSGModelChecker || this instanceof UCSGModelChecker))
+			throw new PrismNotSupportedException("The " + expr.getOperatorString() + " operator is only supported for MDPs, SMGs, CSGs and ICSGs currently");
 
 		// Will we be quantifying universally or existentially over strategies/adversaries?
 		boolean forAll = !expr.isThereExists();
 		
 		// Multiple coalitions only supported for CSGs
-		if (expr.getNumCoalitions() > 1 && model.getModelType() != ModelType.CSG) {
+		if (expr.getNumCoalitions() > 1 && model.getModelType() != ModelType.CSG && model.getModelType() != ModelType.ICSG) {
 			throw new PrismNotSupportedException("The " + expr.getOperatorString() + " operator can only contain one coalition");
 		}
 		// Extract coalition info
@@ -818,22 +819,57 @@ public class ProbModelChecker extends NonProbModelChecker
 		else if (coalitions.size() == 2) {
 			if (unbounded.cardinality() == formulae.size()) {
 				if (rew) {
-					res = ((CSGModelChecker) this).computeRewReachEquilibria((CSG<Double>) model, coalitions, rewards, targets, eqType, crit, min);
+					switch (model.getModelType()) {
+						case CSG:
+							res = ((CSGModelChecker) this).computeRewReachEquilibria((CSG<Double>) model, coalitions, rewards, targets, eqType, crit, min);
+							break;
+						case ICSG:
+							res = ((UCSGModelChecker) this).computeRewReachEquilibria((ICSG<Double>) model, coalitions, rewards, targets, eqType, crit, min);
+							break;
+					}
 				}
 				else {
-					res = ((CSGModelChecker) this).computeProbReachEquilibria((CSG<Double>) model, coalitions, targets, remain, eqType, crit, min);
+					switch (model.getModelType()) {
+						case CSG:
+							res = ((CSGModelChecker) this).computeProbReachEquilibria((CSG<Double>) model, coalitions, targets, remain, eqType, crit, min);
+							break;
+						case ICSG:
+							res = ((UCSGModelChecker) this).computeProbReachEquilibria((ICSG<Double>) model, coalitions, targets, remain, eqType, crit, min);
+							break;
+					}
 				}
 			}
 			else if (bounded.cardinality() == formulae.size()) {
 				if (rew) {
-					res = ((CSGModelChecker) this).computeRewBoundedEquilibria((CSG<Double>) model, coalitions, rewards, exprs, bounds, eqType, crit, min);
+					switch (model.getModelType()) {
+						case CSG:
+							res = ((CSGModelChecker) this).computeRewBoundedEquilibria((CSG<Double>) model, coalitions, rewards, exprs, bounds, eqType, crit, min);
+							break;
+						case ICSG:
+							res = ((UCSGModelChecker) this).computeRewBoundedEquilibria((ICSG<Double>) model, coalitions, rewards, exprs, bounds, eqType, crit, min);
+							break;
+					}
 				}
 				else {
-					res = ((CSGModelChecker) this).computeProbBoundedEquilibria((CSG<Double>) model, coalitions, exprs, targets, remain, bounds, eqType, crit, min);
+					switch (model.getModelType()) {
+						case CSG:
+							res = ((CSGModelChecker) this).computeProbBoundedEquilibria((CSG<Double>) model, coalitions, exprs, targets, remain, bounds, eqType, crit, min);
+							break;
+						case ICSG:
+							res = ((UCSGModelChecker) this).computeProbBoundedEquilibria((ICSG<Double>) model, coalitions, exprs, targets, remain, bounds, eqType, crit, min);
+							break;
+					}
 				}
 			}
 			else {
-				res = ((CSGModelChecker) this).computeMixedEquilibria((CSG<Double>) model, coalitions, rewards, exprs, bounded, targets, remain, bounds, eqType, crit, min);
+				switch (model.getModelType()) {
+					case CSG:
+						res = ((CSGModelChecker) this).computeMixedEquilibria((CSG<Double>) model, coalitions, rewards, exprs, bounded, targets, remain, bounds, eqType, crit, min);
+						break;
+					case ICSG:
+						res = ((UCSGModelChecker) this).computeMixedEquilibria((ICSG<Double>) model, coalitions, rewards, exprs, bounded, targets, remain, bounds, eqType, crit, min);
+						break;
+				}
 			}
 		}
 		else if (coalitions.size() > 2) {
@@ -1035,6 +1071,9 @@ public class ProbModelChecker extends NonProbModelChecker
 		case UMDP:
 			res = ((UMDPModelChecker) this).computeNextProbs((UMDP<Double>) model, target, minMax);
 			break;
+		case ICSG:
+			res = ((UCSGModelChecker) this).computeNextProbs((ICSG<Double>) model, target, minMax);
+			break;
 		default:
 			throw new PrismNotSupportedException("Cannot model check " + expr + " for " + model.getModelType() + "s");
 		}
@@ -1105,6 +1144,9 @@ public class ProbModelChecker extends NonProbModelChecker
 			case UMDP:
 				res = ((UMDPModelChecker) this).computeUntilProbs((UMDP<Double>) model, remain, target, minMax);
 				break;
+			case ICSG:
+				res = ((UCSGModelChecker) this).computeUntilProbs((ICSG<Double>) model, remain, target, minMax);
+				break;
 			default:
 				throw new PrismException("Cannot model check " + expr + " for " + model.getModelType() + "s");
 			}
@@ -1139,6 +1181,9 @@ public class ProbModelChecker extends NonProbModelChecker
 			case IMDP:
 			case UMDP:
 				res = ((UMDPModelChecker) this).computeBoundedUntilProbs((UMDP<Double>) model, remain, target, windowSize, minMax);
+				break;
+			case ICSG:
+				res = ((UCSGModelChecker) this).computeBoundedUntilProbs((ICSG<Double>) model, remain, target, windowSize, minMax);
 				break;
 			default:
 				throw new PrismNotSupportedException("Cannot model check " + expr + " for " + model.getModelType() + "s");
@@ -1217,6 +1262,9 @@ public class ProbModelChecker extends NonProbModelChecker
 		case IMDP:
 		case UMDP:
 			res = ((UMDPModelChecker) this).computeUntilProbs((UMDP<Double>) model, remain, target, minMax);
+			break;
+		case ICSG:
+			res = ((UCSGModelChecker) this).computeUntilProbs((ICSG<Double>) model, remain, target, minMax);
 			break;
 		default:
 			throw new PrismNotSupportedException("Cannot model check " + expr + " for " + model.getModelType() + "s");
@@ -1451,6 +1499,10 @@ public class ProbModelChecker extends NonProbModelChecker
 		case CSG:
 			res = ((CSGModelChecker) this).computeCumulativeRewards((CSG<Double>) model, (CSGRewards<Double>) modelRewards, minMax.getCoalition(), timeInt, minMax.isMin1(), minMax.isMin2(), false);
 			break;
+		// TODO: support ICSG or not?
+		case ICSG:
+			res = ((UCSGModelChecker) this).computeCumulativeRewards((ICSG<Double>) model, (CSGRewards<Double>) modelRewards, timeInt, minMax);
+			break;
 		default:
 			throw new PrismNotSupportedException("Explicit engine does not yet handle the " + expr.getOperatorSymbol() + " reward operator for " + model.getModelType()
 					+ "s");
@@ -1484,6 +1536,9 @@ public class ProbModelChecker extends NonProbModelChecker
 			break;
 		case CSG:
 			res = ((CSGModelChecker) this).computeTotalRewards((CSG<Double>) model, (CSGRewards<Double>) modelRewards, minMax.isMin1(), minMax.isMin2(), minMax.getCoalition());
+			break;
+		case ICSG:
+			res = ((UCSGModelChecker) this).computeTotalRewards((ICSG<Double>) model, (CSGRewards<Double>) modelRewards, minMax);
 			break;
 		default:
 			throw new PrismNotSupportedException("Explicit engine does not yet handle the " + expr.getOperatorSymbol() + " reward operator for " + model.getModelType()
@@ -1537,7 +1592,7 @@ public class ProbModelChecker extends NonProbModelChecker
 	{
 		// Non-game models don't yet support other variants of R[F]
 		if (expr.getOperator() != ExpressionTemporal.P_F) {
-			if (!(model.getModelType() == ModelType.STPG || model.getModelType() == ModelType.SMG || model.getModelType() == ModelType.CSG)) {
+			if (!(model.getModelType() == ModelType.STPG || model.getModelType() == ModelType.SMG || model.getModelType() == ModelType.CSG || model.getModelType() == ModelType.ICSG)) {
 				throw new PrismException("The " + expr.getOperatorSymbol() + " reward operator only works for game models");
 			}
 		}
@@ -1598,6 +1653,16 @@ public class ProbModelChecker extends NonProbModelChecker
 		case IMDP:
 		case UMDP:
 			res = ((UMDPModelChecker) this).computeReachRewards((UMDP<Double>) model, (MDPRewards<Double>) modelRewards, target, minMax);
+			break;
+		case ICSG:
+			switch (expr.getOperator()) {
+				case ExpressionTemporal.P_F:
+					res = ((UCSGModelChecker) this).computeReachRewards((ICSG<Double>) model, (CSGRewards<Double>) modelRewards, target, CSGModelChecker.R_INFINITY, minMax);
+					break;
+				case ExpressionTemporal.R_Fc:
+					res = ((UCSGModelChecker) this).computeReachRewards((ICSG<Double>) model, (CSGRewards<Double>) modelRewards, target, CSGModelChecker.R_CUMULATIVE, minMax);
+					break;
+			}
 			break;
 		default:
 			throw new PrismNotSupportedException("Explicit engine does not yet handle the " + expr.getOperatorSymbol() + " reward operator for " + model.getModelType()

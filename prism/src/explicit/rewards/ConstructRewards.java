@@ -36,15 +36,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import explicit.CSG;
 import common.Interval;
-import explicit.DTMC;
-import explicit.IDTMC;
-import explicit.MDP;
-import explicit.Model;
-import explicit.NondetModel;
-import explicit.SMG;
-import explicit.STPG;
+import explicit.*;
 import parser.State;
 import parser.Values;
 import parser.ast.ASTElement;
@@ -105,7 +98,10 @@ public class ConstructRewards extends PrismComponent
 	{
 		if (model.getModelType() == ModelType.CSG) {
 			return buildCSGRewardStructure((CSG<Value>) model, rewardGen, r);
+		} else if (model.getModelType() == ModelType.ICSG) {
+			return  buildCSGRewardStructure(((ICSG) model).getIntervalModel(), rewardGen, r);
 		}
+
 
 		// If the RewardGenerator already has the rewards built, use this (after checking)
 		if (rewardGen.isRewardLookupSupported(RewardLookup.BY_REWARD_OBJECT)) {
@@ -247,10 +243,10 @@ public class ConstructRewards extends PrismComponent
 		if (rewardGen.isRewardLookupSupported(RewardLookup.BY_STATE)) {
 			State state = statesList.get(s);
 			stateIndex = state;
-			rew = rewardGen.getStateReward(r, state, allowNegative);
+			rew = rewardGen.getStateReward(r, state);
 		} else if (rewardGen.isRewardLookupSupported(RewardLookup.BY_STATE_INDEX)) {
 			stateIndex = s;
-			rew = rewardGen.getStateReward(r, s, allowNegative);
+			rew = rewardGen.getStateReward(r, s);
 		} else {
 			throw new PrismException("Unknown reward lookup mechanism for reward generator");
 		}
@@ -274,10 +270,10 @@ public class ConstructRewards extends PrismComponent
 		if (rewardGen.isRewardLookupSupported(RewardLookup.BY_STATE)) {
 			State state = statesList.get(s);
 			stateIndex = state;
-			rew = rewardGen.getStateActionReward(r, state, action, allowNegative);
+			rew = rewardGen.getStateActionReward(r, state, action);
 		} else if (rewardGen.isRewardLookupSupported(RewardLookup.BY_STATE_INDEX)) {
 			stateIndex = s;
-			rew = rewardGen.getStateActionReward(r, s, action, allowNegative);
+			rew = rewardGen.getStateActionReward(r, s, action);
 		} else {
 			throw new PrismException("Unknown reward lookup mechanism for reward generator");
 		}

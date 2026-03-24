@@ -444,6 +444,23 @@ public class LTLModelChecker extends PrismComponent
 	}
 
 	/**
+	 * Generate a deterministic automaton for the given LTL formula
+	 * and construct the product of this automaton with an ICSG.
+	 *
+	 * @param mc a ProbModelChecker, used for checking maximal state formulas
+	 * @param model the model
+	 * @param expr a path expression
+	 * @param statesOfInterest the set of states for which values should be calculated (null = all states)
+	 * @param allowedAcceptance the allowed acceptance conditions
+	 * @return the product with the DA
+	 * @throws PrismException
+	 */
+	public <Value> LTLProduct<ICSG<Value>> constructProductICSG(ProbModelChecker mc, ICSG<Value> model, Expression expr, BitSet statesOfInterest, AcceptanceType... allowedAcceptance) throws PrismException
+	{
+		return constructDAProductForLTLFormula(mc, model, expr, statesOfInterest, allowedAcceptance);
+	}
+
+	/**
 	 * Generate a deterministic automaton (DA) for the given LTL formula, having first extracted maximal state formulas
 	 * and model checked them with the passed in model and model checker (see {@link #constructDAForLTLFormula}.
 	 * Then construct the product of this automaton with the model.
@@ -580,6 +597,10 @@ public class LTLModelChecker extends PrismComponent
 			((ModelExplicit<Value>) prodModel).setActions(model.getActions());
 			((CSGSimple<Value>) prodModel).setIndexes(((CSG<Value>) model).getIndexes());
 			((CSGSimple<Value>) prodModel).setIdles(((CSG<Value>) model).getIdles());
+		} else if (modelType == ModelType.ICSG) {
+			((ICSGSimple<Value>) prodModel).setActions(((ICSG<Value>) model).getActions());
+			((ICSGSimple<Value>) prodModel).setIndexes(((ICSG<Value>) model).getIndexes());
+			((ICSGSimple<Value>) prodModel).setIdles(((ICSG<Value>) model).getIdles());
 		}
 
 		// Attach evaluator and variable info
@@ -727,16 +748,19 @@ public class LTLModelChecker extends PrismComponent
 				case CSG:
 					iter = ((CSG<Value>) model).getTransitionsIterator(s_1, j);
 					break;
+				case ICSG:
+					iterIntv = ((ICSG<Value>) model).getIntervalTransitionsIterator(s_1, j);
+					break;
 				default:
 					throw new PrismNotSupportedException("Product construction not implemented for " + modelType + "s");
 				}
 				Distribution<Value> prodDistr = null;
 				Distribution<Interval<Value>> prodDistrIntv = null;
 				if (modelType.nondeterministic()) {
-					if (modelType != ModelType.IMDP) {
+					if (modelType != ModelType.IMDP && modelType != ModelType.ICSG) {
 						prodDistr = new Distribution<>(model.getEvaluator());
 					} else {
-						prodDistrIntv = new Distribution<>(((IMDP<Value>) model).getIntervalEvaluator());
+						prodDistrIntv = new Distribution<>(((IntervalModel<Value>) model).getIntervalEvaluator());
 					}
 				}
 
@@ -774,6 +798,7 @@ public class LTLModelChecker extends PrismComponent
 								((IDTMCSimple<Value>) prodModel).setProbability(map_1, map_2, prob);
 								break;
 							case IMDP:
+							case ICSG:
 								prodDistrIntv.set(map_2, prob);
 								break;
 							default:
@@ -800,6 +825,10 @@ public class LTLModelChecker extends PrismComponent
 				case CSG:
 					int t_2 = ((CSGSimple<Value>) prodModel).addActionLabelledChoice(map_1, prodDistr, ((CSG) model).getAction(s_1, j));
 					((CSGSimple<Value>) prodModel).setIndexes(map_1, t_2, ((CSG<Value>) model).getIndexes(s_1, j));
+					break;
+				case ICSG:
+					int it_2 = ((ICSGSimple<Value>) prodModel).addActionLabelledChoice(map_1, prodDistrIntv, ((ICSG) model).getAction(s_1, j));
+					((ICSGSimple<Value>) prodModel).setIndexes(map_1, it_2, ((ICSG<Value>) model).getIndexes(s_1, j));
 					break;
 				default:
 					break;

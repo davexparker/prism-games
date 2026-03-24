@@ -27,12 +27,7 @@
 
 package explicit;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.BitSet;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 import prism.JointAction;
 import prism.PlayerInfo;
@@ -411,4 +406,15 @@ public class CSGSimple<Value> extends MDPSimple<Value> implements CSG<Value>
 			}
 		}
 	}
+
+	@Override
+	public Iterator<Map.Entry<Integer, Double>> getDoubleTransitionsIterator(int s, int i, double val[]) {
+		return (Iterator<Map.Entry<Integer, Double>>) (Iterator<?>) getTransitionsIterator(s, i);
+	}
+
+	@Override
+	public Iterator<Map.Entry<Integer, Double>> getChosenTransitionsIterator(int s, int i) {
+		return getDoubleTransitionsIterator(s, i, null);
+	}
+
 }

@@ -28,10 +28,16 @@
 package explicit;
 
 import java.util.BitSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
+import explicit.rewards.CSGRewards;
 import prism.ModelType;
 import prism.PlayerInfoOwner;
+import prism.PrismException;
+import strat.CSGStrategy;
+import strat.Strategy;
 
 /**
  * Interface for classes that provide (read) access to an explicit-state concurrent stochastic game (CSG).
@@ -99,5 +105,70 @@ public interface CSG<Value> extends MDP<Value>, PlayerInfoOwner
 	
 	// Temp:
 
+	// TODO: Move to MDP interface?
 	public Distribution<Value> getChoice(int s, int i);
+
+	public Iterator<Map.Entry<Integer, Double>> getDoubleTransitionsIterator(int s, int i, double val[]);
+
+	public Iterator<Map.Entry<Integer, Double>> getChosenTransitionsIterator(int s, int i);
+
+	public default Distribution<Double> getDoubleChoice(int s, int i, double val[]) {
+		return Distribution.ofDouble(this.getDoubleTransitionsIterator(s, i, val));
+	}
+
+	public default Distribution<Double> getChosenChoice(int s, int i) {
+		return Distribution.ofDouble(this.getChosenTransitionsIterator(s, i));
+	}
+
+
+	public default void forEachDoubleTransition(int s, int i, double[] val, TransitionConsumer<Double> c)
+	{
+		for (Iterator<Map.Entry<Integer, Double>> it = getDoubleTransitionsIterator(s, i, val); it.hasNext(); ) {
+			Map.Entry<Integer, Double> e = it.next();
+			c.accept(s, e.getKey(), e.getValue());
+		}
+	}
+
+	public default void forEachChosenTransition(int s, int i, TransitionConsumer<Double> c)
+	{
+		for (Iterator<Map.Entry<Integer, Double>> it = getChosenTransitionsIterator(s, i); it.hasNext(); ) {
+			Map.Entry<Integer, Double> e = it.next();
+			c.accept(s, e.getKey(), e.getValue());
+		}
+	}
+
+	public default Strategy<?> getStrategy(List<List<List<Map<BitSet, Double>>>> lstrat, BitSet no, BitSet yes, BitSet inf, CSGStrategy.CSGStrategyType type) {
+		return new CSGStrategy(this, lstrat, no, yes, inf, type);
+	}
+
+
+	public default void jointToIndexes(int[] joint, BitSet indexes) {
+		indexes.clear();
+		for (int p = 0; p < getNumPlayers(); p++) {
+			if (joint[p] != -1) {
+				indexes.set(joint[p]);
+			} else {
+				indexes.set(getIdleForPlayer(p));
+			}
+		}
+	}
+
+	public default BitSet choiceToIndexes(int s, int t) {
+		BitSet indexes = new BitSet();
+		jointToIndexes(getIndexes(s, t), indexes);
+		return indexes;
+	}
+
+	public default BitSet extractCoalitionActionIndexes(BitSet indexes, BitSet coalitionActionIndexes) {
+		BitSet tmp = new BitSet();
+		extractCoalitionActionIndexes(tmp, indexes, coalitionActionIndexes);
+		return tmp;
+	}
+
+	public default void extractCoalitionActionIndexes(BitSet tmp, BitSet jointIndexes, BitSet coalitionActionIndexes) {
+		tmp.clear();
+		tmp.or(coalitionActionIndexes);
+		tmp.and(jointIndexes);
+	}
+
 }
