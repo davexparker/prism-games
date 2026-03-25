@@ -1,6 +1,6 @@
-// CSG model of medium access control 
-// extends model of 
-// Brenguier, R.: PRALINE: A tool for computing Nash equilibria in concurrent games. 
+// CSG model of medium access control
+// extends model of
+// Brenguier, R.: PRALINE: A tool for computing Nash equilibria in concurrent games.
 // In: Proc. CAV’13. LNCS, vol. 8044, pp. 890–895. Springer (2013)
 // with probability of failure with one or both players transmit
 
@@ -24,20 +24,21 @@ const int smax; // message sent bound
 const double q1; // probability single user successfully sends
 const double q2; // probability two users successfully send
 const double q3; // probability two users successfully send
+const double eps;
 
 module channel
 
 	c : bool;
 
-	[t1,w2,w3] true -> q1 : (c'=false) + (1-q1) : (c'=true);
-	[w1,t2,w3] true -> q1 : (c'=false) + (1-q1) : (c'=true);
-	[w1,w2,t3] true -> q1 : (c'=false) + (1-q1) : (c'=true);
+	[t1,w2,w3] true -> [q1-eps,q1+eps] : (c'=false) + [1-q1-eps,1-q1+eps] : (c'=true);
+    [w1,t2,w3] true -> [q1-eps,q1+eps] : (c'=false) + [1-q1-eps,1-q1+eps] : (c'=true);
+    [w1,w2,t3] true -> [q1-eps,q1+eps] : (c'=false) + [1-q1-eps,1-q1+eps] : (c'=true);
 
-	[t1,t2,w3] true -> q2 : (c'=false) + (1-q2) : (c'=true);
-	[w1,t2,t3] true -> q2 : (c'=false) + (1-q2) : (c'=true);
-	[t1,w2,t3] true -> q2 : (c'=false) + (1-q2) : (c'=true);
+    [t1,t2,w3] true -> [q2-eps,q2+eps] : (c'=false) + [1-q2-eps,1-q2+eps] : (c'=true);
+    [w1,t2,t3] true -> [q2-eps,q2+eps] : (c'=false) + [1-q2-eps,1-q2+eps] : (c'=true);
+    [t1,w2,t3] true -> [q2-eps,q2+eps] : (c'=false) + [1-q2-eps,1-q2+eps]: (c'=true);
 
-	[t1,t2,t3] true -> q3 : (c'=false) + (1-q3) : (c'=true);
+    [t1,t2,t3] true -> [q3-eps,q3+eps] : (c'=false) + [1-q3-eps,1-q3+eps] : (c'=true);
 
 endmodule
 
