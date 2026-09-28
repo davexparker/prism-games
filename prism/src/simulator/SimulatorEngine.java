@@ -448,6 +448,7 @@ public class SimulatorEngine extends PrismComponent
 			executeTimedTransition(ref.i, ref.offset, rng.randomExpDouble(r), -1);
 			break;
 		case LTS:
+		case TG:
 			// Pick choice (from strategy or randomly)
 			i = getAutomaticChoiceIndex();
 			// Execute
